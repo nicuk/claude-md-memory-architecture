@@ -18,6 +18,28 @@ Most memory setups fail in one of two ways:
 Cairn Memory is a skill for Claude Code. It fixes both problems and gives you a script
 that proves the fix holds.
 
+## Built your app with AI agents?
+
+If you built your product with Claude Code, Cursor, Codex, or several of them over a few
+months, you have probably seen these problems:
+
+- It undoes a fix you made last week.
+- It re-proposes an idea you already rejected.
+- Each tool follows different rules, because each one reads a different file.
+- Every session starts by re-reading everything, and your usage limit goes faster than the
+  work.
+
+None of this means the AI is getting worse. It means your project's memory is scattered,
+stale or in the wrong place. Cairn Memory gives every agent **one shared memory**:
+`AGENTS.md` is read by Claude Code, Cursor and Codex. It also records what has already
+been decided, so settled questions stay settled.
+
+You don't need to know where any of these files live. Ask in plain words:
+
+- *"Why does Claude keep redoing things we already decided?"*
+- *"Set up memory for this project so every AI tool follows the same rules."*
+- *"Check my project's memory and score it 0–10."*
+
 ## What you get
 
 | | |
@@ -88,6 +110,18 @@ In a small test (two realistic prompts, one run each with and without the skill)
 with the skill passed 93% of the checks against 71% without. Treat that as indicative,
 not conclusive. The checks target Claude Code's file layout. The `AGENTS.md` rules also
 apply to other agents that read `AGENTS.md`.
+
+## Privacy
+
+Nothing is collected. See [PRIVACY.md](PRIVACY.md).
+
+## Who made this
+
+Built by [Nic Chin](https://nicchin.com/?ref=cairn-memory), who reviews apps built with AI
+coding tools. If this audit showed that your agents have been working from stale or
+conflicting instructions, the code they wrote may deserve the same check. That's what the
+[AI-Built App Audit](https://nicchin.com/vibe-coded-app-audit?ref=cairn-memory) is for.
+The plugin is free and complete either way. Nothing in it is held back.
 
 ## License
 

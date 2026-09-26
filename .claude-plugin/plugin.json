@@ -1,15 +1,36 @@
 {
   "name": "cairn-memory",
   "displayName": "Cairn Memory — CLAUDE.md & agent memory that stays true",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Stop Claude re-reading, re-researching and re-deciding. Puts each fact in the cheapest memory layer that will still be found (CLAUDE.md, AGENTS.md, .claude/rules, auto memory, repo docs) and audits it with 22 self-tested checks so it doesn't go stale.",
-  "author": { "name": "Nic Chin", "url": "https://github.com/nicuk" },
+  "author": {
+    "name": "Nic Chin",
+    "url": "https://nicchin.com"
+  },
   "homepage": "https://github.com/nicuk/claude-md-memory-architecture#readme",
   "repository": "https://github.com/nicuk/claude-md-memory-architecture",
   "license": "MIT",
   "keywords": [
-    "claude-md", "agents-md", "memory", "auto-memory", "context-engineering",
-    "token-usage", "context-window", "forgets-between-sessions", "stale-docs",
-    "documentation-drift", "claude-rules", "knowledge-base", "audit"
-  ]
+    "claude-md",
+    "agents-md",
+    "memory",
+    "auto-memory",
+    "context-engineering",
+    "token-usage",
+    "context-window",
+    "forgets-between-sessions",
+    "stale-docs",
+    "documentation-drift",
+    "claude-rules",
+    "knowledge-base",
+    "audit",
+    "vibe-coding",
+    "ai-built-apps",
+    "cursor",
+    "codex"
+  ],
+  "documentationUrl": "https://github.com/nicuk/claude-md-memory-architecture#readme",
+  "supportUrl": "https://github.com/nicuk/claude-md-memory-architecture/issues",
+  "privacyPolicyUrl": "https://github.com/nicuk/claude-md-memory-architecture/blob/main/PRIVACY.md",
+  "termsOfServiceUrl": "https://github.com/nicuk/claude-md-memory-architecture/blob/main/LICENSE"
 }
