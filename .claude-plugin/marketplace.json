@@ -1,0 +1,12 @@
+{
+  "name": "cairn-memory",
+  "description": "Cairn Memory: CLAUDE.md and agent memory that stays cheap and true.",
+  "owner": { "name": "Nic Chin", "url": "https://github.com/nicuk" },
+  "plugins": [
+    {
+      "name": "cairn-memory",
+      "source": "./",
+      "description": "Stop Claude re-reading, re-researching and re-deciding: every fact in the cheapest memory layer that will still be found, audited so it doesn't go stale."
+    }
+  ]
+}
