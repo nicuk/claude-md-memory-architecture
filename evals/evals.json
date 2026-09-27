@@ -38,7 +38,7 @@
         {"id": "migrations-scoped", "text": "(b) goes in a path-scoped .claude/rules file with a migrations glob, or a CLAUDE.md inside the migrations folder"},
         {"id": "terse-global", "text": "(c) goes in the global ~/.claude/CLAUDE.md"},
         {"id": "research-registry", "text": "(d) goes in a tracked repo doc (not CLAUDE.md body, not a memory body), with a one-line pointer to it"},
-        {"id": "billing-local", "text": "(e) goes in billing/CLAUDE.md or a path-scoped rule for billing/**, not the root file"},
+        {"id": "billing-local", "text": "(e) goes in billing/CLAUDE.md or a path-scoped rule for billing/**; the root file holds at most a one-line pointer to it, never the rule itself"},
         {"id": "absolute-dates", "text": "Converts 'last week' and/or 'Q4' into absolute dates or flags that they must be made absolute"},
         {"id": "no-per-folder", "text": "Answers no to a CLAUDE.md in every folder"}
       ]
@@ -47,7 +47,7 @@
   "published_results": {
     "date": "2026-09-26",
     "runs_per_configuration": 1,
-    "note": "Eval 1 was graded on the private folder, not on this synthetic fixture. Its orphan had a different name; the assertion text above is otherwise unchanged.",
+    "note": "Eval 1 was graded on the private folder, not on this synthetic fixture. Its orphan had a different name. billing-local was reworded on 2026-09-27 (see evals/README.md); the runs were graded on the old wording. The assertion text is otherwise unchanged.",
     "audit-bloated-store": {
       "with_skill": {"passed": 6, "total": 7, "failed": ["knows-load-cap"]},
       "without_skill": {"passed": 5, "total": 7, "failed": ["knows-load-cap", "router-fix"]}

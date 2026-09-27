@@ -67,7 +67,9 @@ The narrowest command that proves each claim above: `<command>`.
 ```
 
 Keep it under about 300 lines. Before adding a paragraph, ask whether it forbids,
-requires or disambiguates something. If it doesn't, it belongs somewhere else.
+requires or disambiguates something. If it doesn't, it belongs somewhere else. In a
+`binding` file the audit warns on any rule under a Rules heading that names no enforcer
+and doesn't say it has none.
 
 ## Folder `CLAUDE.md`
 

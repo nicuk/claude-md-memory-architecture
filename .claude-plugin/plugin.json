@@ -1,8 +1,8 @@
 {
   "name": "cairn-memory",
   "displayName": "Cairn Memory — CLAUDE.md & agent memory that stays true",
-  "version": "1.2.0",
-  "description": "Stop Claude re-reading, re-researching and re-deciding. Puts each fact in the cheapest memory layer that will still be found (CLAUDE.md, AGENTS.md, .claude/rules, auto memory, repo docs) and audits it with 22 self-tested checks so it doesn't go stale.",
+  "version": "1.3.0",
+  "description": "Stop Claude re-reading, re-researching and re-deciding. Puts each fact in the cheapest memory layer that will still be found (CLAUDE.md, AGENTS.md, .claude/rules, auto memory, repo docs) and audits it with 25 self-tested checks so it doesn't go stale.",
   "author": {
     "name": "Nic Chin",
     "url": "https://nicchin.com"

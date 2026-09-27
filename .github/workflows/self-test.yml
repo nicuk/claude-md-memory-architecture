@@ -1,6 +1,6 @@
-# Backs the two claims the README makes about the audit script, so they fail
-# loudly instead of rotting: every check fires on a planted defect, and the
-# script imports nothing that can reach the network.
+# Backs the claims this repo makes, so they fail loudly instead of rotting: every check
+# fires on a planted defect, the script is read-only and offline, the stated numbers match
+# their source, and the repo passes its own memory audit with no warnings.
 name: self-test
 
 on:
@@ -20,19 +20,22 @@ jobs:
           python-version: "3.12"
       - name: Every check fires on a planted defect
         run: python skills/memory-architecture/scripts/audit_memory.py --self-test
-      - name: The script imports nothing that can reach the network
+      - name: The script is read-only and can't reach the network
+        # Reads the syntax tree; a grep for `import socket` missed `import json, socket`,
+        # __import__ and subprocess calls. Its own self-test runs first.
         run: |
-          if grep -nE '^\s*(import|from)\s+(socket|urllib|http|requests|httpx|aiohttp|ftplib|smtplib)\b' \
-               skills/memory-architecture/scripts/audit_memory.py; then
-            echo "::error::audit_memory.py imports a networking module; PRIVACY.md says it makes no network calls"
-            exit 1
-          fi
+          python .github/scripts/check_privacy.py --self-test
+          python .github/scripts/check_privacy.py
       - name: The skill's frontmatter parses as strict YAML
         # A description containing ": " once passed `claude plugin validate` and still broke
         # the skill loader, so the parse is checked here, strictly.
         run: |
           pip install --quiet pyyaml
           python .github/scripts/check_frontmatter.py
-      - name: This repo passes its own memory audit
+      - name: The numbers and release facts the docs state match their source
+        run: |
+          python .github/scripts/check_claims.py --self-test
+          python .github/scripts/check_claims.py
+      - name: This repo passes its own memory audit, warnings included
         # Cairn Memory checks the agent-facing files of every Cairn repo, starting with its own.
-        run: python skills/memory-architecture/scripts/audit_memory.py --repo .
+        run: python skills/memory-architecture/scripts/audit_memory.py --repo . --strict

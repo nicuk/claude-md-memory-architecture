@@ -2,6 +2,42 @@
 
 Each release raises `version` in `.claude-plugin/plugin.json` and is tagged `vX.Y.Z`.
 
+## 1.3.0 (2026-09-27)
+
+An audit of this repo against its own principle, "a claim with an enforcer stays true", found
+claims with no enforcer. Two checks had no planted defect, and the README said 22 checks when
+the script had 24. The privacy grep missed three ways to import a network module. Dead links
+inside the skill's own folder went unchecked.
+
+**Added**
+- `rule-unenforced`: in a `binding` doc, a rule under a Rules heading that doesn't say
+  "Enforced by" and name its check, or say it isn't enforced, is a warning.
+- A skill's markdown links must resolve, because its folder ships as it is. Its backticked
+  paths are skipped: on Claude Code's own plugin-dev skills they were examples, not links, 27
+  times out of 27. So are `@` names (a CLAUDE.md feature; in a skill, `@john.doe` is a person)
+  and placeholder links. The skill's own two references are now links, so they're checked.
+  Tested on the public `anthropics/skills` and `anthropics/claude-code` repos: no FAILs from any
+  of it, and 47 false warnings on `anthropics/skills` are gone (README files inside a skill name
+  paths relative to the skill's folder, which is where the agent reads them).
+- Agents, commands, skills and output styles under `.claude/` are walked; a dead pointer there is
+  a warning. `.claude/worktrees/` and any nested repository are skipped: they are copies, not docs.
+- `--census` lists every markdown file and how the walk test covers it.
+- `--strict` exits 1 on warnings too, for CI.
+- CI reads the script's code to prove it's read-only and offline (`check_privacy.py`), and
+  checks the numbers and release facts the docs state against their source (`check_claims.py`).
+  Each has its own planted-case self-test.
+
+**Changed**
+- The self-test reads the check names from the script, so a check without a planted defect
+  fails it. `global-budget` and `agent-file-untracked` now have one: 25 checks, all planted.
+- The demo's check count comes from the script.
+- `AGENTS.md`: each rule names its enforcer or says it has none, and the repo's own audit
+  runs with `--strict`.
+- The skill: `.claude/rules` and folder `CLAUDE.md` reach Claude Code only, so a costly
+  invariant also gets a line in `AGENTS.md` and a check that stops every agent.
+- The eval assertion `billing-local` allowed no root-file line, which contradicted the skill.
+  It now allows a one-line pointer; `evals/README.md` explains why the published grades stand.
+
 ## 1.2.0 (2026-09-27)
 
 Measured on four public repositories, where the 1.1.0 audit crashed on one and most of its

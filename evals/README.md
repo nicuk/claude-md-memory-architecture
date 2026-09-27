@@ -94,6 +94,11 @@ measurement, and the numbers may differ.
   (private) folder with the same shape.
 - **Author-built.** The same author wrote the skill, the prompts, the assertions and the fixture, and
   graded the runs. The assertions check what the author thinks matters.
+- **One assertion reworded after the runs.** `billing-local` said the billing freeze goes "not the root
+  file". That contradicted the skill, which gives a constraint that shapes the plan one line in the root
+  file. On 2026-09-27 it was reworded to allow that one-line pointer. The published runs were graded on
+  the old wording: the with-skill run put the freeze in a local file and passes either way, and the
+  without-skill run put the whole rule in the root file and fails either way.
 - **One assertion no run passed.** `knows-load-cap` (only the first 200 lines / 25 KB of MEMORY.md load)
   failed in both configurations: the index was 36 lines, so the cap never bound and neither run raised it.
   The synthetic index is 34 lines, so the same is likely.

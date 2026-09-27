@@ -8,6 +8,11 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 import sys
 
+# The check count comes from the script itself, so the demo can't state a stale number.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "skills" / "memory-architecture" / "scripts"))
+from audit_memory import check_names  # noqa: E402
+CHECKS = len(check_names())
+
 OUT = Path(sys.argv[1])
 OUT.mkdir(parents=True, exist_ok=True)
 
@@ -88,8 +93,8 @@ def terminal() -> str:
         (G, "ok   agent-file-size"),
         (G, "ok   competing-current"),
         (G, "ok   global-project-leak"),
-        (D, "…    19 more checks, each forced to fail once on a planted defect"),
-        (G, "self-test passed: all 22 planted defects detected"),
+        (D, "…    and every other check, each forced to fail once on a planted defect"),
+        (G, f"self-test passed: all {CHECKS} planted defects detected"),
         (T, ""),
         (P, "$ python audit_memory.py --memory-dir memory"),
         (F, "FAIL (1)"),
@@ -126,7 +131,7 @@ def terminal() -> str:
                 f'font-size="19" font-weight="{weight.get(kind, "400")}" fill="{color[kind]}" xml:space="preserve">{escape(s)}</text>')
             t += 0.16 if s else 0.3
     h = y0 + len(lines) * lh + 20
-    return f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 {h}" width="1280" height="{h}" role="img" aria-label="The audit script's self-test passing all 22 checks, then an audit that finds an orphaned memory, a duplicate index entry and two competing current directions">
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 {h}" width="1280" height="{h}" role="img" aria-label="The audit script's self-test passing all {CHECKS} checks, then an audit that finds an orphaned memory, a duplicate index entry and two competing current directions">
 <style>
 .line {{ animation: in .25s ease-out both; }}
 @keyframes in {{ from {{ opacity: 0; transform: translateY(4px); }} to {{ opacity: 1; transform: none; }} }}

@@ -43,6 +43,10 @@ confirm yours with `/memory` or its docs before relying on a row.
 expensive, state it in the right written layer so the agent plans around it, and also
 enforce it with a deny rule, a hook or CI, so that one skipped read can't break it.
 
+**Other agents read less.** `.claude/rules` and folder `CLAUDE.md` files reach Claude Code
+only. When Cursor or Codex also work in the repo, give a costly invariant one line in
+`AGENTS.md` too, and rely on CI or a git hook to hold it: those stop every agent, whoever is typing.
+
 **Load timing matters for planning.** A folder `CLAUDE.md` or a path-scoped rule loads
 only once a matching file is read. Creating a new file, or planning before reading
 anything, never triggers it. So a constraint that shapes the plan ("don't touch
@@ -74,7 +78,7 @@ nothing and prevents a whole re-investigation.
 
 ## Writing memory
 
-Read `references/templates.md` for copy-ready templates of every file type.
+Read [references/templates.md](references/templates.md) for copy-ready templates of every file type.
 
 **Save when:**
 - the user corrects your approach, or confirms a non-obvious one;
@@ -131,8 +135,7 @@ This is where most tokens are saved or wasted.
 
 ## Keeping it true
 
-These are the rules with a real incident behind each one. `references/incidents.md` has
-the stories. Read it when you need to explain a rule to a skeptical owner, or when a rule
+These are the rules with a real incident behind each one. [references/incidents.md](references/incidents.md) has the stories. Read it when you need to explain a rule to a skeptical owner, or when a rule
 seems like overkill.
 
 - **The walk test.** An agent with no memory must be able to orient itself, act and report
@@ -142,10 +145,16 @@ seems like overkill.
   could report a dead pointer without containing one. `@path` imports and relative links in
   agent files are pointers too, and a path that resolves only as the tail of a longer one
   (`settings/tips.ts` for `packages/client/src/settings/tips.ts`) should be written in full.
+  A skill's markdown links are pointers too: its folder ships as it is, so a dead link breaks
+  it for everyone who installs it. Its backticked paths are left alone, since they usually
+  name files in the repo the skill is used on.
 - **A rule with no gate is a preference.** Whatever check proves the walk test has to
   actually run: in CI, in `npm test` or in a pre-commit hook. "Can be run" is not "runs".
+  In a `binding` doc, each rule says "Enforced by" and names its check, or says it isn't
+  enforced. The reader then knows which rules hold, and the audit warns on a rule that does neither.
 - **The census.** Every tracked agent-facing document is either covered by the gate or
-  excluded from it with a stated reason. No document enters the repo invisibly.
+  excluded from it with a stated reason. No document enters the repo invisibly. The script's
+  `--census` lists every markdown file and how the walk test covers it.
 - **Declared precedence.** When two binding documents can disagree, give each an
   `authority` (`binding` > `decision` > `brief` > `reference`) and a `status`
   (`live` | `historical`) in frontmatter. A dead pointer in a `historical` doc is a
@@ -220,7 +229,8 @@ python <skill-dir>/scripts/audit_memory.py --self-test   # proves every check ca
 
 FAIL means a breach (an orphaned memory, a truncated index, a dead pointer in a live
 doc). WARN means worth a look. Budgets live at the top of the script as named constants,
-so change them on purpose rather than ignoring the warnings.
+so change them on purpose rather than ignoring the warnings. In CI, `--repo . --strict`
+fails on warnings too, which suits a repo that has already cleared them.
 
 When `index-budget`, `index-line-length`, `index-truncated`, `index-duplicate` or
 `memory-orphan` fire, fix the index with a draft rather than by hand:
