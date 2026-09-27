@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-16A34A?style=flat-square)](LICENSE)
 [![Privacy: nothing collected](https://img.shields.io/badge/privacy-nothing_collected-6CCBFF?style=flat-square)](PRIVACY.md)
 
-**[Install](#install)** · **[What you get](#what-you-get)** · **[The audit script](#the-audit-script)** · **[Privacy](#privacy)**
+**[Install](#install)** · **[What you get](#what-you-get)** · **[The script](#the-script)** · **[Privacy](#privacy)** · **[The Cairn family](#the-cairn-family)**
 
 **Claude forgets everything between sessions, so it re-reads, re-researches and re-decides.
 Cairn Memory gives every fact one right place and keeps it from going stale.**
@@ -31,7 +31,7 @@ that proves the fix holds:
 
 *Real output, from a small made-up memory folder.*
 
-## Built your app with AI agents?
+## Who it's for
 
 If you built your product with Claude Code, Cursor, Codex, or several of them over a few
 months, you have probably seen these problems:
@@ -66,16 +66,17 @@ You don't need to know where any of these files live. Ask in plain words:
 | **Rules that can't be skipped** | Which rules to write down, which to enforce with a permission deny rule, hook or CI step, and why a folder `CLAUDE.md` alone won't stop Claude creating a new file in a frozen folder. |
 | **A score you can defend** | A 0–10 rubric where every point cites evidence, and things it couldn't see are marked N/A rather than scored 0. |
 
-## How it compares with `claude-md-management`
+## How it compares
 
-Anthropic's official
-[`claude-md-management`](https://claude.com/plugins/claude-md-management) plugin makes
-your `CLAUDE.md` files better written. It checks commands, architecture notes and
-gotchas, and captures what you learned in a session.
+| Need | Use |
+|---|---|
+| Better-written `CLAUDE.md` files: commands, architecture notes, gotchas, session learnings | Anthropic's [`claude-md-management`](https://claude.com/plugins/claude-md-management) |
+| Recall of past sessions by search | a memory or transcript-search plugin |
+| **Where each fact belongs across the whole memory system, and whether it's still true** | **Cairn Memory** |
 
-Cairn Memory works a level above that: it decides **where** each fact should live
-across the whole memory system, moves out what doesn't belong, and catches memory
-that has gone stale. They work well together.
+`claude-md-management` makes your `CLAUDE.md` files better written. Cairn Memory works a
+level above that: it decides **where** each fact should live, moves out what doesn't
+belong, and catches memory that has gone stale. They work well together.
 
 ## Install
 
@@ -88,7 +89,7 @@ Then ask in plain words: *"audit my Claude memory and score it 0–10"*, *"where
 this rule live?"*, *"set up CLAUDE.md for this new repo"*, or *"Claude keeps redoing the
 same research"*.
 
-## The audit script
+## The script
 
 `skills/memory-architecture/scripts/audit_memory.py` runs 22 checks that give the same
 answer every time. Examples: an index past its load cap, memories missing from the
@@ -131,6 +132,19 @@ apply to other agents that read `AGENTS.md`.
 ## Privacy
 
 Nothing is collected. See [PRIVACY.md](PRIVACY.md).
+
+## The Cairn family
+
+Three plugins built on one principle: **a claim with an enforcer stays true; a claim with
+only an author rots.** Each one checks a different kind of claim.
+[The principles, the evidence and the design decisions](https://github.com/nicuk/cairn) are
+in one place.
+
+| Plugin | The question it answers |
+|---|---|
+| **Cairn Memory** (this one) | Is what your agents remember cheap to load, and still true? |
+| [Cairn Signals](https://github.com/nicuk/llm-silent-failure-audit) | Are the numbers your AI product shows real? |
+| [Cairn Verify](https://github.com/nicuk/did-ai-really-fix-it) | Did the AI really fix it? |
 
 ## Who made this
 
