@@ -94,8 +94,8 @@ same research"*.
 `skills/memory-architecture/scripts/audit_memory.py` runs 22 checks that give the same
 answer every time. Examples: an index past its load cap, memories missing from the
 index, one file indexed twice, several files each claiming to be the current direction,
-backticked paths that don't exist, `.claude/rules` globs that match nothing, and
-project-specific lines in your global file.
+backticked paths, `@` imports and links that don't exist, `.claude/rules` globs that match
+nothing, and project-specific lines in your global file.
 
 ```
 python skills/memory-architecture/scripts/audit_memory.py --self-test
@@ -104,9 +104,11 @@ python skills/memory-architecture/scripts/audit_memory.py --repo . \
 ```
 
 `--self-test` plants one defect for each check in a temporary folder and confirms every
-check fires. A check that has never failed has never been tested. The self-test badge at
-the top runs it on every push, along with a check that the script imports nothing that
-can reach the network.
+check fires. A check that has never failed has never been tested. It also plants the
+false alarms that real repositories produced, such as brace globs, gitignored build
+output and placeholders like `OUT_DIR`, and confirms each one stays quiet or only warns.
+The self-test badge at the top runs it on every push, along with a check that the script
+imports nothing that can reach the network.
 
 If your memory index is over budget, `--draft-index` proposes a trimmed one. It writes
 `MEMORY.draft.md` next to your index, with one short line per memory and none lost, and
@@ -120,11 +122,11 @@ python skills/memory-architecture/scripts/audit_memory.py --draft-index \
 
 ## What it runs, and what it doesn't
 
-- It reads only the paths you pass it, and runs `git ls-files` in `--repo` to see what
-  is tracked.
-- It writes nothing, with two exceptions: `--self-test` writes a temporary folder and
-  deletes it, and `--draft-index` writes one file, `MEMORY.draft.md`, in the memory folder
-  you name. It never overwrites `MEMORY.md`.
+- It reads only the paths you pass it, and runs `git ls-files` and `git check-ignore` in
+  `--repo` to see what is tracked and what is ignored.
+- It writes nothing, with two exceptions: `--self-test` writes a temporary folder (with a
+  throwaway git repository in it) and deletes it, and `--draft-index` writes one file,
+  `MEMORY.draft.md`, in the memory folder you name. It never overwrites `MEMORY.md`.
 - It makes no network calls, and there's no server or API key. Nothing leaves your
   machine.
 - Everything else is instructions for Claude in `SKILL.md` and `references/`.

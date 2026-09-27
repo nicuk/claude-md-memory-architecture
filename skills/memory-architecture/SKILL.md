@@ -139,7 +139,9 @@ seems like overkill.
   status from the files alone. That only holds if every pointer resolves. **Backticks mean
   "follow this":** a backticked path must resolve, and a bare path is a name (a file under
   discussion, quoted as broken, or known to be absent). Without that rule, no document
-  could report a dead pointer without containing one.
+  could report a dead pointer without containing one. `@path` imports and relative links in
+  agent files are pointers too, and a path that resolves only as the tail of a longer one
+  (`settings/tips.ts` for `packages/client/src/settings/tips.ts`) should be written in full.
 - **A rule with no gate is a preference.** Whatever check proves the walk test has to
   actually run: in CI, in `npm test` or in a pre-commit hook. "Can be run" is not "runs".
 - **The census.** Every tracked agent-facing document is either covered by the gate or
