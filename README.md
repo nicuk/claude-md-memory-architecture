@@ -2,10 +2,10 @@
 
 ![CLAUDE.md and agent memory that stays true. Three stones stack into a cairn.](assets/hero.svg)
 
-[![Claude Code plugin](https://img.shields.io/badge/Claude_Code-plugin-E9A23B?style=flat-square)](#install)
+[![Claude Code plugin](https://img.shields.io/badge/Claude_Code-plugin-0A6CFF?style=flat-square)](#install)
 [![Self-test](https://img.shields.io/github/actions/workflow/status/nicuk/claude-md-memory-architecture/self-test.yml?branch=main&label=self-test&style=flat-square)](.github/workflows/self-test.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-8CC084?style=flat-square)](LICENSE)
-[![Privacy: nothing collected](https://img.shields.io/badge/privacy-nothing_collected-C9B79C?style=flat-square)](PRIVACY.md)
+[![License: MIT](https://img.shields.io/badge/license-MIT-16A34A?style=flat-square)](LICENSE)
+[![Privacy: nothing collected](https://img.shields.io/badge/privacy-nothing_collected-6CCBFF?style=flat-square)](PRIVACY.md)
 
 **[Install](#install)** · **[What you get](#what-you-get)** · **[The audit script](#the-audit-script)** · **[Privacy](#privacy)**
 
