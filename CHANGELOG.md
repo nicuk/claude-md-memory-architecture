@@ -2,6 +2,29 @@
 
 Each release raises `version` in `.claude-plugin/plugin.json` and is tagged `vX.Y.Z`.
 
+## 1.2.0 (2026-09-27)
+
+Measured on four public repositories, where the 1.1.0 audit crashed on one and most of its
+findings on the others were false alarms.
+
+**Fixed**
+- A brace glob in `.claude/rules` (`{website/src/**,README.md}`) crashed the audit. Braces are
+  expanded and each alternative is checked on its own; a glob it can't read is a warning.
+- `rule-dead-scope` fails only when every alternative of every glob matches nothing. A dead
+  alternative next to live ones, or a glob that matches only gitignored or untracked files,
+  is a warning.
+- The walk test no longer fails on `...` abbreviations, placeholders like `OUT_DIR/`, a
+  leading `/`, gitignored build output, or a file the sentence says to create. A path that
+  only resolves as the tail of a longer tracked path is a warning naming the full path.
+
+**Added**
+- `.claude/CLAUDE.md` counts as a root file and is walk-tested; so are `.claude/rules` bodies.
+- The walk test follows `@path` imports and relative markdown links in agent files.
+- `paths: "**"` is reported as unscoped.
+
+**Changed**
+- The folder `CLAUDE.md` budget is 100 lines, up from 60 (the evidence is at the constant).
+
 ## 1.1.0 (2026-09-27)
 
 **Added**

@@ -39,7 +39,11 @@ INDEX_HARD_BYTES = 25_000       # ... or 25KB of MEMORY.md; the rest is invisibl
 INDEX_LINE_MAX_CHARS = 200      # a hook, not the finding
 GLOBAL_MAX_LINES = 60           # loaded into every session in every repo
 ROOT_CLAUDE_MAX_LINES = 300     # past this, it gets skimmed
-FOLDER_CLAUDE_MAX_LINES = 60    # a folder file carries local invariants only
+# A folder file carries local invariants only. This was 60 until 2026-09-27, when an audit of
+# four public repositories flagged well-built folder files at 65 to 89 lines (local rules plus
+# the commands for that package) and the one clearly bloated folder file was 320 lines. At 60
+# the warning was mostly noise; 100 still catches the bloated case.
+FOLDER_CLAUDE_MAX_LINES = 100
 MEMORY_FILE_MAX_BYTES = 4000    # one fact; longer means several facts
 DRAFT_LINE_MAX_CHARS = 150      # --draft-index: a hook is what it is and when it matters
 DRAFT_TITLE_MAX_CHARS = 60      # --draft-index: leaves most of the line for the hook
@@ -49,6 +53,19 @@ SKIP_DIRS = {"node_modules", ".git", ".next", "dist", "build", ".venv", "venv",
              "__pycache__", ".turbo", "coverage", ".claude"}
 
 BACKTICK_PATH = re.compile(r"`([A-Za-z0-9_./\-]+/[A-Za-z0-9_.\-]+\.[A-Za-z0-9]{1,6})`")
+# Claude Code's `@path` import. Needs a file extension, so an npm scope (`@types/node`) or a
+# handle (`@alice`) isn't taken for one; the lookbehind skips e-mail addresses.
+AT_IMPORT = re.compile(r"(?<![\w@/.`])@((?:\.{1,2}/)*[A-Za-z0-9_\-][A-Za-z0-9_./\-]*\.[A-Za-z0-9]{1,6})(?![\w/])")
+MD_LINK = re.compile(r"!?\[[^\]\n]*\]\(\s*<?([^()\s<>]+)>?(?:\s+[\"'][^\"'\n]*[\"'])?\s*\)")
+FENCE = re.compile(r"^[ \t]*(```|~~~).*?^[ \t]*\1[^\n]*$", re.M | re.S)
+CODE_SPAN = re.compile(r"`[^`\n]*`")
+# Walk-test targets that aren't pointers into the repo. Each class was a false FAIL on real repos.
+PLACEHOLDER_HEAD = re.compile(r"^[A-Z][A-Z0-9_]*[A-Z0-9]$")   # `OUT_DIR/x.rs`: a variable, not a folder
+HOME_DIRS = {".local", ".config", ".cache", ".ssh", ".aws", ".kube", ".docker", ".npm", ".cargo", ".gnupg"}
+CREATE_WORDS = re.compile(r"\b(?:creat(?:e|es|ed|ing)|generat(?:e|es|ed|ing)|produc(?:e|es|ed|ing)|outputs?|"
+                          r"emits?|will write|writes? (?:it |them )?(?:to|into))\b", re.I)
+UNSCOPED_GLOBS = {"**", "**/*", "/**", "./**", "**/**"}
+GLOB_ALTERNATIVES_MAX = 256     # a brace pattern that expands past this is reported, not evaluated
 INDEX_LINK = re.compile(r"\]\(([^)]+\.md)\)")
 # Lowercase only, and not possessive: "Today's Signal" is a feature name, "decided today" is rot.
 DATE_WORDS = re.compile(r"\b(today|yesterday|tomorrow|last week|next week|this week)\b(?!'s)")
@@ -91,6 +108,24 @@ def memory_files(mem: Path) -> list[Path]:
     return sorted(p for p in mem.glob("*.md") if p.name not in {"MEMORY.md", DRAFT_NAME})
 
 
+def split_top(inline: str) -> list[str]:
+    """Split an inline YAML list on the commas that separate items, not those inside {a,b} or quotes."""
+    items, cur, depth, quote = [], "", 0, ""
+    for ch in inline:
+        if quote:
+            quote = "" if ch == quote else quote
+        elif ch in "\"'":
+            quote = ch
+        elif ch in "{}":
+            depth += 1 if ch == "{" else -1
+        elif ch == "," and depth <= 0:
+            items.append(cur)
+            cur = ""
+            continue
+        cur += ch
+    return items + [cur]
+
+
 def rule_paths(text: str) -> list[str]:
     """The `paths:` globs of a .claude/rules file, inline or as a YAML list."""
     if not text.startswith("---"):
@@ -102,8 +137,7 @@ def rule_paths(text: str) -> list[str]:
         m = re.match(r"^paths\s*:\s*(.*)$", line)
         if m:
             in_paths = True
-            inline = m.group(1).strip().strip("[]")
-            out += [g.strip().strip("\"'") for g in inline.split(",") if g.strip()]
+            out += [g.strip().strip("\"'") for g in split_top(m.group(1).strip().strip("[]")) if g.strip()]
             continue
         if in_paths:
             item = re.match(r"^\s+-\s*(.+)$", line)
@@ -365,58 +399,304 @@ def walk_md(repo: Path):
                 yield Path(root) / f
 
 
+def git(repo: Path, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
+    """Run a read-only git command in `repo`. GIT_* variables are dropped: set by a git hook, they
+    would point the command at the repository the hook runs in instead of the one named here."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, input=stdin,
+                          encoding="utf-8", errors="replace", env=env, timeout=120)
+
+
 def git_tracked(repo: Path) -> set[str] | None:
     try:
-        out = subprocess.run(["git", "-C", str(repo), "ls-files"], capture_output=True, text=True, check=True).stdout
-        return {line.strip() for line in out.splitlines()}
+        p = git(repo, "ls-files", "-z")
+        if p.returncode:
+            raise RuntimeError(p.stderr.strip())
+        return {x for x in p.stdout.split("\0") if x}
     except Exception as e:  # not a repo, or git missing — say so rather than guess
         print(f"note: git ls-files unavailable ({e.__class__.__name__}); tracking checks skipped", file=sys.stderr)
         return None
 
 
-def check_repo(repo: Path, r: Report) -> None:
-    root_files = [repo / n for n in ("CLAUDE.md", "AGENTS.md") if (repo / n).exists()]
-    if not root_files:
-        r.add("WARN", "root-missing", str(repo), "no CLAUDE.md or AGENTS.md — a memoryless agent starts from nothing")
+def git_ignored(repo: Path, paths) -> set[str]:
+    """Which of these repo-relative paths .gitignore excludes. They needn't exist: a build output
+    is ignored before it is built. Empty, with a note, if git can't say."""
+    paths = sorted({p for p in paths if p and p != ".." and not p.startswith("../")})
+    if not paths:
+        return set()
+    try:
+        p = git(repo, "check-ignore", "-z", "--no-index", "--stdin", stdin="\0".join(paths) + "\0")
+        why = "" if p.returncode in (0, 1) else p.stderr.strip()[:100]      # 1 means none is ignored
+    except Exception as e:
+        why = e.__class__.__name__
+    if why:
+        print(f"note: git check-ignore unavailable ({why}); gitignored paths are not recognised", file=sys.stderr)
+        return set()
+    return {x for x in p.stdout.split("\0") if x}
 
+
+def disk_files(repo: Path) -> list[str]:
+    """Every file under `repo`, tracked or not, as repo-relative posix paths."""
+    out: list[str] = []
+    for root, dirs, files in os.walk(repo):
+        dirs[:] = [d for d in dirs if d not in {".git", "node_modules"}]
+        base = Path(root).relative_to(repo).as_posix()
+        out += [f if base == "." else f"{base}/{f}" for f in files]
+    return out
+
+
+# ------------------------------------------------ path-scoped rules
+
+def expand_braces(glob: str) -> list[str]:
+    """The `{a,b}` alternatives of a glob, nested and repeated braces included."""
+    m = re.search(r"\{([^{}]*)\}", glob)
+    if not m:
+        return [glob]
+    out: list[str] = []
+    for alt in m.group(1).split(","):
+        out += expand_braces(glob[:m.start()] + alt + glob[m.end():])
+        if len(out) > GLOB_ALTERNATIVES_MAX:
+            raise ValueError(f"expands to more than {GLOB_ALTERNATIVES_MAX} alternatives")
+    return out
+
+
+def glob_regex(glob: str) -> re.Pattern:
+    """A brace-free `paths:` glob as a regex over repo-relative paths. `**` crosses folders, `*` and
+    `?` stay inside one, and a glob with no `/` matches a file name at any depth. Raises ValueError
+    (or re.error) on a glob it can't read, so the caller reports it instead of crashing."""
+    g = glob.strip()
+    g = g[2:] if g.startswith("./") else g
+    g = g.lstrip("/")
+    if not g or "{" in g or "}" in g:
+        raise ValueError("unbalanced brace" if g else "empty glob")
+    out, i = [], 0
+    while i < len(g):
+        if g.startswith("**/", i):
+            out.append("(?:.*/)?")
+            i += 3
+        elif g.startswith("**", i):
+            out.append(".*")
+            i += 2
+        elif g[i] in "*?":
+            out.append("[^/]*" if g[i] == "*" else "[^/]")
+            i += 1
+        elif g[i] == "[":
+            j = g.find("]", i + 2)
+            if j == -1:
+                raise ValueError("unclosed [")
+            body = g[i + 1:j]
+            out.append("[" + ("^" + body[1:] if body.startswith("!") else body).replace("\\", "\\\\") + "]")
+            i = j + 1
+        else:
+            out.append(re.escape(g[i]))
+            i += 1
+    rx = "".join(out)
+    if "/" not in g.rstrip("/"):
+        rx = "(?:.*/)?" + rx
+    if g.endswith("/"):
+        rx += ".*"
+    return re.compile(rx)
+
+
+def glob_probe(glob: str) -> str:
+    """One concrete path a brace-free glob would match, to ask git whether such paths are ignored."""
+    g = glob.strip()
+    g = (g[2:] if g.startswith("./") else g).lstrip("/").replace("**/", "").replace("**", "x")
+    g = re.sub(r"\[[^\]]*\]", "x", g).replace("*", "x").replace("?", "x")
+    return g + "x" if not g or g.endswith("/") else g
+
+
+def check_rules(repo: Path, tracked: set[str] | None, r: Report) -> None:
     rules = repo / ".claude" / "rules"
-    if rules.is_dir():
-        for f in rules.rglob("*.md"):
-            fm_text = read(f)
-            globs = rule_paths(fm_text)
-            if not globs:
-                r.add("WARN", "rule-unscoped", f.relative_to(repo).as_posix(),
-                      "no `paths:` — loads at startup in every session; scope it or move it to CLAUDE.md on purpose")
-            for g in globs:
-                if not list(repo.glob(g.strip())):
-                    r.add("FAIL", "rule-dead-scope", f.relative_to(repo).as_posix(),
-                          f"paths glob '{g.strip()}' matches no file — this rule can never load")
+    if not rules.is_dir():
+        return
+    known = sorted(tracked) if tracked is not None else None
+    disk: list[str] | None = None
+    for f in sorted(rules.rglob("*.md")):
+        rel = f.relative_to(repo).as_posix()
+        globs = [g.strip() for g in rule_paths(read(f)) if g.strip()]
+        if not globs:
+            r.add("WARN", "rule-unscoped", rel,
+                  "no `paths:` — loads at startup in every session; scope it or move it to CLAUDE.md on purpose")
+            continue
+        wide = [g for g in globs if g in UNSCOPED_GLOBS]
+        if wide:
+            r.add("WARN", "rule-unscoped", rel, f"paths '{wide[0]}' matches every file, so this rule loads as soon as "
+                  "any file is read, like an unscoped one; scope it or move it to CLAUDE.md on purpose")
+            continue
+        # Each glob, and each {a,b} alternative in it, is judged on its own. The rule is dead only
+        # when every alternative of every glob matches nothing, tracked or on disk.
+        status: dict[tuple[str, str], str] = {}
+        unreadable = False
+        for g in globs:
+            try:
+                pats = [(a, glob_regex(a)) for a in expand_braces(g)]
+            except (ValueError, re.error) as e:
+                unreadable = True
+                r.add("WARN", "rule-dead-scope", rel, f"paths glob '{g}' can't be read ({e}); check by hand that it matches files")
+                continue
+            for a, rx in pats:
+                if known is not None and any(rx.fullmatch(p) for p in known):
+                    status[(g, a)] = "live"
+                    continue
+                if disk is None:
+                    disk = disk_files(repo)
+                on_disk = any(rx.fullmatch(p) for p in disk)
+                # Without git, files on disk are all there is. With it, a file only on disk is
+                # untracked or ignored: a clean clone doesn't have it.
+                status[(g, a)] = ("live" if on_disk else "dead") if known is None else ("local" if on_disk else "dead")
+        dead = [k for k, s in status.items() if s == "dead"]
+        if dead and known is not None:
+            # A glob aimed at gitignored files (`**/*.tfvars`) matches nothing in a clean clone but does
+            # on a machine that has them. That's a scope to look at, not a rule that can never load.
+            ignored = git_ignored(repo, [glob_probe(a) for _, a in dead])
+            for k in dead:
+                if glob_probe(k[1]) in ignored:
+                    status[k] = "ignored"
+        live = [k for k, s in status.items() if s == "live"]
+        aside = [a for (_, a), s in status.items() if s in ("local", "ignored")]
+        if live:
+            for g, a in (k for k, s in status.items() if s == "dead"):
+                what = f"paths glob '{g}'" if a == g else f"alternative '{a}' of paths glob '{g}'"
+                r.add("WARN", "rule-dead-scope", rel,
+                      f"{what} matches nothing; the rule still loads through its other paths. Fix it or drop it")
+        elif aside:
+            r.add("WARN", "rule-dead-scope", rel, f"paths match only untracked or gitignored files ({', '.join(aside[:3])}), "
+                  "so this rule never loads in a clean clone")
+        elif status and not unreadable:
+            r.add("FAIL", "rule-dead-scope", rel,
+                  f"no paths glob matches any file ({', '.join(repr(g) for g in globs)}) — this rule can never load")
+
+
+# ------------------------------------------------ the walk test
+
+def sentence_at(text: str, start: int, end: int) -> str:
+    """The sentence (within its line) around text[start:end]."""
+    a = text.rfind("\n", 0, start) + 1
+    b = text.find("\n", end)
+    line = text[a:len(text) if b == -1 else b]
+    cut = re.sub(r"\b(e\.g|i\.e|etc|vs|cf)\. ", lambda m: m.group(0)[:-2] + "_ ", line)   # not sentence ends
+    s, e = start - a, end - a
+    head = max(cut.rfind(p, 0, s) for p in (". ", "! ", "? "))
+    tails = [i for i in (cut.find(p, e) for p in (". ", "! ", "? ")) if i != -1]
+    return line[0 if head == -1 else head + 2:min(tails) + 1 if tails else len(line)]
+
+
+def pointers(text: str, agent: bool) -> list[tuple[str, str, str]]:
+    """(kind, target, sentence) for each pointer: backticked paths always; in agent files also
+    `@path` imports and relative markdown links, outside code blocks and code spans."""
+    found = [("backtick", m.group(1), sentence_at(text, m.start(), m.end())) for m in BACKTICK_PATH.finditer(text)]
+    if agent:
+        blank = lambda m: re.sub(r"[^\n]", " ", m.group(0))      # keeps offsets, so sentences line up
+        prose = CODE_SPAN.sub(blank, FENCE.sub(blank, text))
+        for kind, rx in (("import", AT_IMPORT), ("link", MD_LINK)):
+            found += [(kind, m.group(1), sentence_at(text, m.start(), m.end())) for m in rx.finditer(prose)]
+    return found
+
+
+def walk_target(raw: str, kind: str) -> str | None:
+    """The repo path a pointer names, or None when it names something else."""
+    t = raw.strip()
+    if kind == "link":
+        if re.match(r"^[A-Za-z][A-Za-z0-9+.\-]*:", t) or t.startswith(("#", "//")):
+            return None                           # a URL, another scheme, or an anchor on this page
+        t = re.sub(r"%([0-9A-Fa-f]{2})", lambda m: chr(int(m.group(1), 16)), t.split("#", 1)[0].split("?", 1)[0])
+    if not t or "..." in t or "…" in t or any(ch in t for ch in "*<>{}$~"):
+        return None                               # `docs/.../x.md` abbreviates; `<id>.md` is a template
+    return t if t.startswith("./") else t.lstrip("/")
+
+
+def walk_candidates(repo: Path, md: Path, t: str) -> list[str]:
+    """Where a pointer may lead, as repo-relative paths: from the file's folder, then from the root."""
+    out: list[str] = []
+    for base in (md.parent, repo):
+        rel = os.path.relpath(os.path.normpath(os.path.join(base, t)), repo).replace(os.sep, "/")
+        if rel != ".." and not rel.startswith("../") and rel not in out:
+            out.append(rel)
+    return out
+
+
+WALK_MSG = {
+    "backtick": "`{t}` does not resolve (backticks mean 'follow this'; write it bare if it is a name, not a pointer)",
+    "import": "`@{t}` import does not resolve — Claude Code skips a missing import without a word",
+    "link": "link to `{t}` does not resolve",
+}
+
+
+def check_repo(repo: Path, r: Report) -> None:
+    roots = [repo / "CLAUDE.md", repo / "AGENTS.md", repo / ".claude" / "CLAUDE.md"]
+    if not any(p.exists() for p in roots):
+        r.add("WARN", "root-missing", str(repo), "no CLAUDE.md, AGENTS.md or .claude/CLAUDE.md — a memoryless agent starts from nothing")
 
     tracked = git_tracked(repo)
-    for md in walk_md(repo):
+    check_rules(repo, tracked, r)
+    tracked_dirs = {f.rsplit("/", i)[0] for f in (tracked or ()) for i in range(1, f.count("/") + 1)}
+
+    docs = list(walk_md(repo))
+    if roots[2].exists():
+        docs.append(roots[2])                     # walk_md skips dot-folders; this one is a root file
+    rules_dir = repo / ".claude" / "rules"
+    rule_docs = set(rules_dir.rglob("*.md")) if rules_dir.is_dir() else set()
+    pending: list[tuple[str, str, str, str, list[str]]] = []
+    for md in docs + sorted(rule_docs):
         rel = md.relative_to(repo).as_posix()
         text = read(md)
         is_agent_file = md.name in {"CLAUDE.md", "AGENTS.md"}
         if is_agent_file:
             n = len(text.splitlines())
-            limit = ROOT_CLAUDE_MAX_LINES if md.parent == repo else FOLDER_CLAUDE_MAX_LINES
+            limit = ROOT_CLAUDE_MAX_LINES if md.parent in (repo, repo / ".claude") else FOLDER_CLAUDE_MAX_LINES
             if n > limit:
                 r.add("WARN", "agent-file-size", rel, f"{n} lines; budget {limit}. Move how-to and history out; keep rules that change a decision")
             if tracked is not None and rel not in tracked:
                 r.add("WARN", "agent-file-untracked", rel, "not tracked in git — teammates and clean clones never see it")
 
-        # The walk test: every backticked path in an agent-facing file must resolve.
-        if is_agent_file or md.name in {"CONTEXT.md", "README.md"}:
-            fm = frontmatter(text)
-            strict = fm.get("status", "live") != "historical"
-            for target in set(BACKTICK_PATH.findall(text)):
-                if any(ch in target for ch in "*<>{}"):
-                    continue
-                candidates = [md.parent / target, repo / target]
-                if not any(c.exists() for c in candidates):
-                    level = "FAIL" if strict and md.name != "README.md" else "WARN"
-                    r.add(level, "walk-test", rel,
-                          f"`{target}` does not resolve (backticks mean 'follow this'; write it bare if it is a name, not a pointer)")
+        # The walk test: every pointer in an agent-facing file must resolve.
+        agent = is_agent_file or md in rule_docs
+        if not (agent or md.name in {"CONTEXT.md", "README.md"}):
+            continue
+        strict = frontmatter(text).get("status", "live") != "historical"
+        level = "FAIL" if strict and md.name != "README.md" else "WARN"
+        sentences: dict[tuple[str, str], list[str]] = {}
+        for kind, raw, sentence in pointers(text, agent):
+            t = walk_target(raw, kind)
+            if t is not None:
+                sentences.setdefault((kind, t), []).append(sentence)
+        for (kind, t), said in sentences.items():
+            head = re.sub(r"^(\.\.?/)+", "", t).split("/", 1)[0]
+            if (head in HOME_DIRS or PLACEHOLDER_HEAD.match(head)) and not (repo / head).exists() and not (md.parent / head).exists():
+                continue                          # `~/.config/x` quoted without the ~, or `OUT_DIR/x.rs`
+            cands = walk_candidates(repo, md, t)
+            if cands and not any((repo / c).exists() or c in (tracked or ()) or c in tracked_dirs for c in cands):
+                pending.append((level, rel, kind, t, cands, said))
+
+    # Resolved in one batch: a pointer into a gitignored path names a build output, and a pointer that
+    # only a longer tracked path ends with is followable, just not from here.
+    ignored = git_ignored(repo, [c for p in pending for c in p[4]]) if pending and tracked is not None else set()
+    files = sorted(tracked) if tracked is not None else (disk_files(repo) if pending else [])
+    for level, rel, kind, t, cands, said in pending:
+        if any(c in ignored for c in cands):
+            continue
+        lead = re.match(r"^(?:\.\.?/)*", t).group(0)
+        tail = t[len(lead):]
+        here = Path(rel).parent.as_posix()
+        # `./x` and `../x` point from this file's folder, so only a file under that folder can be meant.
+        base = os.path.normpath(os.path.join(here, lead)).replace(os.sep, "/") if lead else "."
+        under = lambda f, d: d == "." or f.startswith(d + "/")
+        # Nearest first, then the one whose folder the sentence names closest to the pointer
+        # ("the `website/` page (e.g. `src/pages/index.astro`)").
+        def named(f: str) -> float:
+            gaps = [abs(m.start() - x.find(t)) for x in said for seg in f[:len(f) - len(tail)].split("/") if seg
+                    for m in re.finditer(rf"(?<![\w-]){re.escape(seg)}(?![\w-])", x.replace(t, " " * len(t)))]
+            return min(gaps, default=float("inf"))
+        hits = sorted((f for f in files if (f == tail or f.endswith("/" + tail)) and under(f, base)),
+                      key=lambda f: (not under(f, here), named(f)))
+        if hits:
+            more = f" (or {len(hits) - 1} more)" if len(hits) > 1 else ""
+            r.add("WARN", "walk-test", rel, f"`{'@' if kind == 'import' else ''}{t}` only resolves as `{hits[0]}`{more}; "
+                  "write the full path so an agent can follow it")
+        elif not any(CREATE_WORDS.search(x) for x in said):
+            # Only a path found nowhere can be one the sentence says to create ("create `x/y.ts`").
+            r.add(level, "walk-test", rel, WALK_MSG[kind].format(t=t))
 
 
 # ---------------------------------------------------------------- self-test
@@ -467,18 +747,128 @@ def self_test() -> int:
         missing = expected - fired
         for c in sorted(expected):
             print(f"{'ok  ' if c in fired else 'MISS'} {c}")
-    cases = self_test_draft()
-    print()
-    for name, ok, detail in cases:
-        print(f"{'ok  ' if ok else 'FAIL'} {name}" + ("" if ok else f": {detail}"))
-    broken = [c for c in cases if not c[1]]
+    broken = []
+    for label, cases in (("--draft-index", self_test_draft()), ("--repo", self_test_repo())):
+        print()
+        for name, ok, detail in cases:
+            print(f"{'ok  ' if ok else 'FAIL'} {name}" + ("" if ok else f": {detail}"))
+        broken += [c for c in cases if not c[1]]
+        if not any(not c[1] for c in cases):
+            print(f"{label}: all {len(cases)} cases held")
     if missing or broken:
-        print(f"\nself-test FAILED: {len(missing)} check(s) never fired, {len(broken)} --draft-index case(s) failed",
+        print(f"\nself-test FAILED: {len(missing)} check(s) never fired, {len(broken)} case(s) failed",
               file=sys.stderr)
         return 1
-    print(f"\n--draft-index: all {len(cases)} cases held")
+    print()
     print(f"self-test passed: all {len(expected)} planted defects detected")
     return 0
+
+
+def self_test_repo() -> list[tuple[str, bool, str]]:
+    """Plant, in a throwaway git repository, each false-alarm class that real repositories produced,
+    next to the real defect it resembles, and check each lands where it should: FAIL, WARN or nothing."""
+    def rule(*globs: str, body: str = "rule\n") -> str:
+        return "---\npaths:\n" + "".join(f"  - {g}\n" for g in globs) + "---\n" + body
+    files = {
+        ".gitignore": "*.tfvars\nout/\n",
+        "src/app/main.ts": "", "docs/guide.md": "", "infra/main.tf": "", "pkg/client/src/settings/tips.ts": "", "pkg/client/src/log.ts": "",
+        "admin/src/pages/index.astro": "", "web/src/pages/index.astro": "", "native/lib/shim.c": "",
+        "app/CLAUDE.md": "- The **admin** console is separate; the **web** landing page (e.g. `src/pages/index.astro`) is static.\n",
+        ".claude/CLAUDE.md": "Start in `src/app/main.ts`, never in `src/app/gone_root.ts`.\n",   # the only root file
+        "sub/CLAUDE.md": "- a local rule\n" * 89,
+        ".claude/rules/brace-dead.md": rule('"{mobile/ios/**,mobile/android/**}"'),
+        ".claude/rules/brace-partial.md": rule('"{src/**,website/**}"'),
+        ".claude/rules/brace-live.md": rule('"{src,docs}/**"', '"pkg/*/src/**"'),
+        ".claude/rules/inline.md": '---\npaths: ["{src,docs}/**", "pkg/**"]\n---\nrule\n',
+        ".claude/rules/ignored.md": rule('"**/*.tfvars"'),
+        ".claude/rules/terraform.md": rule("'**/*.tf'", "'**/*.tfvars'"),
+        ".claude/rules/local.md": rule('"scratch/**"'),
+        ".claude/rules/unreadable.md": rule('"src/[app/**"'),
+        ".claude/rules/everything.md": rule('"**"'),
+        ".claude/rules/body.md": rule('"src/**"', body="Edit `src/app/body_gone.ts` with care.\n"),
+        "docs/AGENTS.md": "\n".join([
+            "- Abbreviated: the page is `docs/.../guide.md`.",
+            "- Placeholder: the build reads `OUT_DIR/detected.rs` at compile time.",
+            "- Rooted: the entry point is `/src/app/main.ts`; the old one was `/src/app/rooted_gone.ts`.",
+            "- Ignored: the bundle is `out/bundle.js` after a build.",
+            "- Short: tips live in `settings/tips.ts` for the client.",
+            "- Local: the logger is `./log.ts`, next to this file.",
+            "- To add a handler, create `src/app/new_module.ts` first.",
+            "- The build compiles `lib/shim.c` and emits a binary.",
+            "- Dead: the router is `src/app/really_gone.ts`.",
+            "- Imports: @docs/guide.md and @docs/missing_import.md, but not `@docs/in_code.md`.",
+            "- Links: [guide](docs/guide.md), [top](#top), [site](https://example.com/gone.md), [old](old_notes.md).",
+            "- Mail dev@example.com with questions.",
+            "```", "@docs/in_fence.md", "```", ""]),
+    }
+    with tempfile.TemporaryDirectory() as t:
+        p = Path(t) / "repo"
+        for name, body in files.items():
+            (p / name).parent.mkdir(parents=True, exist_ok=True)
+            (p / name).write_text(body, encoding="utf-8")
+        (p / "scratch").mkdir()
+        (p / "scratch" / "notes.txt").write_text("", encoding="utf-8")    # on disk, never added, not ignored
+        try:
+            ok = git(p, "init", "-q").returncode == 0
+            # --info-only indexes the files without writing git objects: nothing but the index to clean up.
+            ok = ok and git(p, "update-index", "--add", "--info-only", "--", *files).returncode == 0
+        except OSError:
+            ok = False
+        if not ok:
+            return [("repo-cases-need-git", False, "git init / update-index failed; these cases need git on PATH")]
+        r = Report()
+        try:
+            check_repo(p, r)
+            crash = ""
+        except Exception as e:
+            crash = f"{e.__class__.__name__}: {e}"
+    fs = r.findings
+
+    def at(where: str, check: str = "", level: str = "", text: str = "") -> list[dict]:
+        return [f for f in fs if f["where"] == where and (not check or f["check"] == check)
+                and (not level or f["level"] == level) and text in f["msg"]]
+
+    def said(text: str) -> list[dict]:
+        return [f for f in fs if text in f["msg"]]
+    rules = ".claude/rules/"
+    only_warn = lambda w: bool(at(rules + w, "rule-dead-scope", "WARN")) and not at(rules + w, level="FAIL")
+    return [
+        ("glob-never-crashes", not crash, crash),
+        ("brace-all-dead-fails", bool(at(rules + "brace-dead.md", "rule-dead-scope", "FAIL", "mobile/ios")), "no FAIL"),
+        ("brace-partly-dead-warns", only_warn("brace-partial.md") and bool(at(rules + "brace-partial.md", text="'website/**'")),
+         str(at(rules + "brace-partial.md"))),
+        ("brace-live-quiet", not at(rules + "brace-live.md"), str(at(rules + "brace-live.md"))),
+        ("inline-brace-list-parsed", not at(rules + "inline.md"), str(at(rules + "inline.md"))),
+        ("gitignored-glob-warns", only_warn("ignored.md"), str(at(rules + "ignored.md"))),
+        ("untracked-match-warns", only_warn("local.md"), str(at(rules + "local.md"))),
+        ("gitignored-alternative-quiet", not at(rules + "terraform.md"), str(at(rules + "terraform.md"))),
+        ("unreadable-glob-warns", bool(at(rules + "unreadable.md", "rule-dead-scope", "WARN", "can't be read"))
+         and not at(rules + "unreadable.md", level="FAIL"), str(at(rules + "unreadable.md"))),
+        ("star-star-unscoped", bool(at(rules + "everything.md", "rule-unscoped", "WARN")), "no rule-unscoped"),
+        ("walk-skips-abbreviation", not said("docs/.../guide.md"), str(said("docs/.../guide.md"))),
+        ("walk-skips-placeholder", not said("OUT_DIR"), str(said("OUT_DIR"))),
+        ("walk-leading-slash-is-root", not said("src/app/main.ts")
+         and bool(at("docs/AGENTS.md", "walk-test", "FAIL", "src/app/rooted_gone.ts")), str(said("rooted_gone"))),
+        ("walk-skips-gitignored", not said("out/bundle.js"), str(said("out/bundle.js"))),
+        ("walk-suffix-warns", bool(at("docs/AGENTS.md", "walk-test", "WARN", "only resolves as `pkg/client/src/settings/tips.ts`"))
+         and not at("docs/AGENTS.md", level="FAIL", text="settings/tips.ts"), str(said("settings/tips.ts"))),
+        ("walk-suffix-prefers-named", bool(at("app/CLAUDE.md", "walk-test", "WARN", "only resolves as `web/src/pages/index.astro`")),
+         str(at("app/CLAUDE.md"))),
+        ("walk-dot-slash-stays-local", bool(at("docs/AGENTS.md", "walk-test", "FAIL", "`./log.ts` does not resolve")),
+         str(said("log.ts"))),
+        ("walk-skips-create", not said("new_module.ts"), str(said("new_module.ts"))),
+        ("walk-create-word-not-a-pass", bool(at("docs/AGENTS.md", "walk-test", "WARN", "only resolves as `native/lib/shim.c`")),
+         str(said("shim.c"))),
+        ("walk-dead-still-fails", bool(at("docs/AGENTS.md", "walk-test", "FAIL", "src/app/really_gone.ts")), "no FAIL"),
+        ("dot-claude-is-root", not [f for f in fs if f["check"] == "root-missing"], "root-missing fired"),
+        ("dot-claude-walked", bool(at(".claude/CLAUDE.md", "walk-test", "FAIL", "src/app/gone_root.ts")), "no FAIL"),
+        ("rule-body-walked", bool(at(rules + "body.md", "walk-test", "FAIL", "src/app/body_gone.ts")), "no FAIL"),
+        ("at-import-walked", bool(at("docs/AGENTS.md", "walk-test", "FAIL", "@docs/missing_import.md"))
+         and not said("in_code.md") and not said("in_fence.md") and not said("example.com"), str(said("@"))),
+        ("link-walked", bool(at("docs/AGENTS.md", "walk-test", "FAIL", "old_notes.md"))
+         and not said("gone.md") and not said("#top"), str(said("link"))),
+        ("folder-budget-100", not at("sub/CLAUDE.md", "agent-file-size"), str(at("sub/CLAUDE.md"))),
+    ]
 
 
 def self_test_draft() -> list[tuple[str, bool, str]]:
