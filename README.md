@@ -1,4 +1,6 @@
-![Cairn Memory: CLAUDE.md and agent memory that stays true. A cairn of four stones stacks itself.](assets/hero.svg)
+![Cairn](assets/cairn-logo.png)
+
+![CLAUDE.md and agent memory that stays true. Three stones stack into a cairn.](assets/hero.svg)
 
 [![Claude Code plugin](https://img.shields.io/badge/Claude_Code-plugin-E9A23B?style=flat-square)](#install)
 [![Self-test](https://img.shields.io/github/actions/workflow/status/nicuk/claude-md-memory-architecture/self-test.yml?branch=main&label=self-test&style=flat-square)](.github/workflows/self-test.yml)
