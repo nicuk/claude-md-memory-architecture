@@ -1,4 +1,11 @@
-# Cairn Memory: CLAUDE.md and agent memory that stays true
+![Cairn Memory: CLAUDE.md and agent memory that stays true. A cairn of four stones stacks itself.](assets/hero.svg)
+
+[![Claude Code plugin](https://img.shields.io/badge/Claude_Code-plugin-E9A23B?style=flat-square)](#install)
+[![Self-test](https://img.shields.io/github/actions/workflow/status/nicuk/claude-md-memory-architecture/self-test.yml?branch=main&label=self-test&style=flat-square)](.github/workflows/self-test.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-8CC084?style=flat-square)](LICENSE)
+[![Privacy: nothing collected](https://img.shields.io/badge/privacy-nothing_collected-C9B79C?style=flat-square)](PRIVACY.md)
+
+**[Install](#install)** · **[What you get](#what-you-get)** · **[The audit script](#the-audit-script)** · **[Privacy](#privacy)**
 
 **Claude forgets everything between sessions, so it re-reads, re-researches and re-decides.
 Cairn Memory gives every fact one right place and keeps it from going stale.**
@@ -16,7 +23,11 @@ Most memory setups fail in one of two ways:
   picks one and confidently redoes work that is already closed.
 
 Cairn Memory is a skill for Claude Code. It fixes both problems and gives you a script
-that proves the fix holds.
+that proves the fix holds:
+
+![The audit script's self-test passes all 22 checks, then an audit of a memory folder finds an orphaned memory, a duplicate index entry and two files each claiming to be the current direction.](assets/audit-demo.svg)
+
+*Real output, from a small made-up memory folder.*
 
 ## Built your app with AI agents?
 
@@ -41,6 +52,8 @@ You don't need to know where any of these files live. Ask in plain words:
 - *"Check my project's memory and score it 0–10."*
 
 ## What you get
+
+![Where each fact belongs. Loads every session: the global CLAUDE.md, the project CLAUDE.md or AGENTS.md, and the MEMORY.md index. Loads on demand: path-scoped rules, folder CLAUDE.md files, memory topic files, and repo docs and registries. Never read, but enforced: deny rules, hooks and CI checks.](assets/layers.svg)
 
 | | |
 |---|---|
@@ -88,7 +101,9 @@ python skills/memory-architecture/scripts/audit_memory.py --repo . \
 ```
 
 `--self-test` plants one defect for each check in a temporary folder and confirms every
-check fires. A check that has never failed has never been tested.
+check fires. A check that has never failed has never been tested. The self-test badge at
+the top runs it on every push, along with a check that the script imports nothing that
+can reach the network.
 
 ## What it runs, and what it doesn't
 
