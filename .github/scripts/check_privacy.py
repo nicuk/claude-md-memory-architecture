@@ -3,8 +3,9 @@ check_privacy.py — proves what PRIVACY.md says about the audit script by readi
 
   - it imports nothing that can reach the network, in any form (`import json, socket`,
     `from urllib import ...`, `__import__`, importlib);
-  - it runs no program but git, and only git's read-only commands (`init` and `update-index`
-    are allowed in the self-test, which builds a throwaway repository);
+  - it runs no program but git, only through its `git()` helper, and only git's read-only
+    commands (`init` and `update-index` are allowed in the self-test, which builds a throwaway
+    repository);
   - it writes files only in --draft-index and in the self-test.
 
 A grep for `import socket` missed the first three forms above; this reads the syntax tree.
@@ -27,6 +28,8 @@ WRITERS = {"write_text", "write_bytes", "mkdir", "unlink", "rmdir", "rename", "t
 OS_WRITERS = {"remove", "unlink", "rmdir", "removedirs", "rename", "renames", "replace", "makedirs", "mkdir",
               "system", "popen", "truncate", "symlink", "link", "chmod", "chown"}
 BANNED_CALLS = {"__import__", "eval", "exec", "compile"}
+# Imported under another name, these would slip past the checks below, which match on the module name.
+NO_ALIAS = {"subprocess", "os", "shutil", "tempfile", "io", "codecs", "pathlib"}
 
 
 def allowed_to_write(stack: list[str]) -> bool:
@@ -64,13 +67,15 @@ class Guard(ast.NodeVisitor):
         for a in node.names:
             if a.name.split(".")[0] in NETWORK:
                 self.bad(node, f"imports {a.name}, which can reach the network")
+            elif a.asname and a.name.split(".")[0] in NO_ALIAS:
+                self.bad(node, f"imports {a.name} as {a.asname}; use the plain name so this check can see its calls")
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         mod = (node.module or "").split(".")[0]
         if mod in NETWORK:
             self.bad(node, f"imports from {node.module}, which can reach the network")
-        elif mod in {"subprocess", "os", "shutil"}:
+        elif mod in {"subprocess", "os", "shutil", "io", "codecs"}:
             self.bad(node, f"imports names from {mod}; call {mod}.<name> so this check can see it")
         self.generic_visit(node)
 
@@ -84,9 +89,13 @@ class Guard(ast.NodeVisitor):
         if owner == "importlib":
             self.bad(node, "imports a module by name at run time")
         if owner == "subprocess":
+            # Only the git() helper may start a process, so every git command goes through the
+            # subcommand check below.
             first = node.args[0] if node.args else None
-            if not (isinstance(first, ast.List) and first.elts and isinstance(first.elts[0], ast.Constant)
-                    and first.elts[0].value == "git"):
+            if self.stack[-1:] != ["git"]:
+                self.bad(node, f"subprocess.{attr} outside the git() helper; run git through git()")
+            elif not (isinstance(first, ast.List) and first.elts and isinstance(first.elts[0], ast.Constant)
+                      and first.elts[0].value == "git"):
                 self.bad(node, f"subprocess.{attr} runs something that isn't visibly git")
         if name == "git":
             sub = node.args[1] if len(node.args) > 1 else None
@@ -96,7 +105,9 @@ class Guard(ast.NodeVisitor):
             elif cmd not in GIT_READ:
                 self.bad(node, f"runs `git {cmd or '<computed>'}`; only {', '.join(sorted(GIT_READ))} are read-only here")
         writes = ((name == "open" and write_mode(node, 1))
-                  or (attr == "open" and write_mode(node, 0))
+                  or (attr == "open" and owner in {"io", "codecs"} and write_mode(node, 1))
+                  or (attr == "open" and owner == "os")          # os.open takes flags: assume it can write
+                  or (attr == "open" and owner not in {"io", "codecs", "os"} and write_mode(node, 0))
                   or attr in WRITERS
                   or (owner == "os" and attr in OS_WRITERS)
                   or owner in {"shutil", "tempfile"})
@@ -121,6 +132,12 @@ def self_test() -> int:
         "importlib": "import importlib\n",
         "subprocess-curl": "import subprocess\nsubprocess.run(['curl', 'https://example.com'])\n",
         "subprocess-computed": "import subprocess\ncmd = ['git']\nsubprocess.run(cmd)\n",
+        "git-push-direct": "import subprocess\ndef check():\n    subprocess.run(['git', '-C', '.', 'push'])\n",
+        "aliased-subprocess": "import subprocess as sp\nsp.run(['curl', 'x'])\n",
+        "aliased-os": "import os as o\no.system('ls')\n",
+        "io-open-write": "import io\ndef check():\n    io.open('/tmp/log', 'w')\n",
+        "os-open": "import os\ndef check():\n    os.open('/tmp/log', os.O_WRONLY)\n",
+        "codecs-open-write": "import codecs\ndef check():\n    codecs.open('log', 'a')\n",
         "from-subprocess": "from subprocess import run\n",
         "git-push": "def check(r):\n    git(r, 'push')\n",
         "git-computed": "def check(r, c):\n    git(r, c)\n",
@@ -132,10 +149,10 @@ def self_test() -> int:
         "tempdir-outside-self-test": "import tempfile\ndef check():\n    tempfile.mkdtemp()\n",
         "module-level-write": "open('x', 'a')\n",
     }
-    clean = ("import os, re, subprocess, tempfile\n"
+    clean = ("import io, os, re, subprocess, tempfile\n"
              "def git(repo, *a):\n    return subprocess.run(['git', '-C', str(repo), *a])\n"
              "def check(r):\n    git(r, 'ls-files', '-z')\n    git(r, 'check-ignore')\n    open(r)\n    open(r, 'r', encoding='utf-8')\n"
-             "    'a'.replace('a', 'b')\n    os.walk(r)\n"
+             "    'a'.replace('a', 'b')\n    os.walk(r)\n    io.open(r, 'r')\n"
              "def draft_index(p, force):\n    open(p, 'w' if force else 'x')\n"
              "def self_test():\n    git(r, 'init')\n    p.write_text('x')\n    tempfile.TemporaryDirectory()\n"
              "    (lambda: p.mkdir())()\n")

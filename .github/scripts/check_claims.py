@@ -76,8 +76,8 @@ def main() -> int:
     for rel in filter(None, tracked.split("\0")):
         try:
             text = (ROOT / rel).read_text(encoding="utf-8")
-        except (UnicodeDecodeError, FileNotFoundError):
-            continue                                   # binary, or deleted in the working tree
+        except (UnicodeDecodeError, OSError):
+            continue                                   # binary, a submodule or folder link, or deleted
         for hit in home_paths(text):
             bad.append(f"{rel}: holds an absolute path from someone's machine ('{hit}...')")
 

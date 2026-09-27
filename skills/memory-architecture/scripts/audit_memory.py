@@ -26,6 +26,7 @@ and replaces MEMORY.md with it by hand.
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 import re
@@ -76,8 +77,8 @@ INDEX_LINK = re.compile(r"\]\(([^)]+\.md)\)")
 DATE_WORDS = re.compile(r"\b(today|yesterday|tomorrow|last week|next week|this week)\b(?!'s)")
 # A rule in a `binding` doc says what enforces it, or says that nothing does.
 ENFORCER_MARK = re.compile(r"enforced by|not enforced|\(intent\b", re.I)
-RULES_HEADING = re.compile(r"^#{1,6}\s+.*\brules?\b", re.I)
-CHECK_CALL = re.compile(r'\br\.add\(\s*[^,()]+,\s*"([a-z][a-z-]*)"')
+# "## Rules", "## Hard rules", "### Git rules": a section of rules, not a title that mentions them.
+RULES_HEADING = re.compile(r"^#{2,6}\s+(?:[\w'-]+\s+){0,2}rules?\s*:?\s*$", re.I)
 CURRENT_CLAIM = re.compile(r"\b(ACTIVE DIRECTION|NORTH STAR|CURRENT DIRECTION|SOURCE OF TRUTH|LEAD CANDIDATE|ACTIVE)\b")
 PROJECT_SMELLS =re.compile(r"(npm run |pnpm |yarn |/src/|src/|app/api|supabase|prisma|manage\.py|\.tsx?\b|migrations/)", re.I)
 
@@ -87,6 +88,8 @@ class Report:
     findings: list[dict] = field(default_factory=list)
 
     def add(self, level: str, check: str, where: str, msg: str) -> None:
+        if check not in check_names():
+            raise ValueError(f"check '{check}' isn't a literal name in an .add() call, so the self-test can't count it")
         self.findings.append({"level": level, "check": check, "where": where, "msg": msg})
 
     @property
@@ -94,9 +97,19 @@ class Report:
         return any(f["level"] == "FAIL" for f in self.findings)
 
 
+_CHECK_NAMES: list[str] = []
+
+
 def check_names() -> list[str]:
-    """Every check this script can report, read from its own source, so the self-test can't miss one."""
-    return sorted(set(CHECK_CALL.findall(Path(__file__).read_text(encoding="utf-8"))))
+    """Every check this script can report: the literal name in each `.add(level, "name", ...)` call,
+    read from this file's syntax tree, so the self-test can't miss one. Report.add refuses any other."""
+    if not _CHECK_NAMES:
+        tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+        _CHECK_NAMES.extend(sorted({n.args[1].value for n in ast.walk(tree)
+                                    if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                                    and n.func.attr == "add" and len(n.args) >= 2
+                                    and isinstance(n.args[1], ast.Constant) and isinstance(n.args[1].value, str)}))
+    return _CHECK_NAMES
 
 
 def read(p: Path) -> str:
@@ -409,10 +422,13 @@ def md_files(repo: Path) -> list[Path]:
     """Every markdown file an agent might read: dependency and build folders, nested repositories and
     worktrees are skipped, and so are dot-folders, except the agent-facing parts of `.claude/`."""
     out: list[Path] = []
+    dot = repo / ".claude"
     for root, dirs, files in os.walk(repo):
         here = Path(root)
-        if here == repo / ".claude":
+        if here == dot:
             dirs[:] = sorted(d for d in dirs if d in DOT_CLAUDE_DIRS)
+        elif dot in here.parents:             # a rule or skill folder may be called build or dist
+            dirs[:] = sorted(d for d in dirs if not d.startswith(".") and not (here / d / ".git").exists())
         else:
             dirs[:] = sorted(d for d in dirs if ((d == ".claude" and here == repo)
                              or (d not in SKIP_DIRS and not d.startswith("."))) and not (here / d / ".git").exists())
@@ -425,8 +441,11 @@ def skill_dirs(docs: list[Path]) -> list[Path]:
     return sorted({d.parent for d in docs if d.name == "SKILL.md"}, key=lambda p: -len(p.parts))
 
 
-def bundle_of(md: Path, bundles: list[Path]) -> Path | None:
-    return next((b for b in bundles if b == md.parent or b in md.parents), None)
+def bundle_of(md: Path, bundles: list[Path], repo: Path) -> Path | None:
+    """The skill folder a file ships in. A SKILL.md at the repo root covers only itself: the rest of
+    the repo keeps its own rules rather than all becoming one skill."""
+    b = next((b for b in bundles if b == md.parent or b in md.parents), None)
+    return None if b == repo and md.name != "SKILL.md" else b
 
 
 def coverage(repo: Path, md: Path, bundles: list[Path]) -> str | None:
@@ -439,7 +458,7 @@ def coverage(repo: Path, md: Path, bundles: list[Path]) -> str | None:
         return "agent"
     if parts[0] == ".claude":
         return "dot"
-    if bundle_of(md, bundles):
+    if bundle_of(md, bundles, repo):
         return "bundle"
     if md.name in {"CONTEXT.md", "README.md"}:
         return "backticks"
@@ -461,6 +480,8 @@ def census(repo: Path) -> list[tuple[str, str]]:
     for md in docs:
         mode = coverage(repo, md, bundles)
         label = CENSUS_LABEL[mode] if mode else "not checked"
+        if mode == "dot" and bundle_of(md, bundles, repo):
+            label = "walked: a dead link FAILs (a skill), other dead pointers WARN"
         if mode and frontmatter(read(md)).get("status") == "historical":
             label += " (historical, so WARN only)"
         out.append((md.relative_to(repo).as_posix(), label))
@@ -759,20 +780,29 @@ def check_repo(repo: Path, r: Report) -> None:
 
         # The walk test: every pointer in an agent-facing file must resolve.
         level = "WARN" if mode == "dot" or not strict or md.name == "README.md" else "FAIL"
-        bundle = bundle_of(md, bundles)
+        bundle = bundle_of(md, bundles, repo)
         sentences: dict[tuple[str, str], list[str]] = {}
         for kind, raw, sentence in pointers(text, mode != "backticks"):
             t = walk_target(raw, kind)
-            if t is not None:
+            # `@` imports are a CLAUDE.md feature: in an agent or skill, `@jane.smith` is a person.
+            if t is not None and not (kind == "import" and mode in ("dot", "bundle")):
                 sentences.setdefault((kind, t), []).append(sentence)
         for (kind, t), said in sentences.items():
             head = re.sub(r"^(\.\.?/)+", "", t).split("/", 1)[0]
             placeholder = PLACEHOLDER_HEAD.match(head) and not (repo / head).exists() and not (md.parent / head).exists()
             if bundle and kind == "link" and not placeholder:
                 # A skill ships its folder as is: a dead link in it breaks the skill for everyone who installs it.
-                if not any((base / t).exists() for base in (md.parent, bundle)) and not any(CREATE_WORDS.search(x) for x in said):
-                    r.add("WARN" if not strict or md.name == "README.md" else "FAIL", "walk-test", rel,
-                          WALK_MSG[kind].format(t=t) + f" from the skill's folder `{bundle.relative_to(repo).as_posix()}/`; the skill ships broken")
+                found = next((base / t for base in (md.parent, bundle) if (base / t).exists()), None)
+                where = f"the skill's folder `{bundle.relative_to(repo).as_posix()}/`"
+                blevel = "WARN" if not strict or md.name == "README.md" else "FAIL"
+                if found is None and not any(CREATE_WORDS.search(x) for x in said):
+                    r.add(blevel, "walk-test", rel, WALK_MSG[kind].format(t=t) + f" from {where}; the skill ships broken")
+                elif found is not None and tracked is not None:
+                    # Installers get what git tracks, not what is on this machine.
+                    target = os.path.relpath(os.path.normpath(found), repo).replace(os.sep, "/")
+                    if target not in tracked and target not in tracked_dirs:
+                        r.add(blevel, "walk-test", rel, f"link to `{t}` resolves here, but `{target}` isn't tracked "
+                              f"in git, so the skill ships without it")
                 continue
             if mode == "bundle":
                 # Backticked paths in a skill were examples or the user's files, not links: 27 of 27 on
@@ -917,13 +947,14 @@ def self_test_repo() -> tuple[list[tuple[str, bool, str]], set[str]]:
             "```", "@docs/in_fence.md", "```", ""]),
         # A plugin skill: links into its own folder must resolve; its other paths name the user's files.
         ".claude-plugin/plugin.json": "{}\n",
-        "skills/demo/SKILL.md": "---\nname: demo\n---\nRead [the guide](references/guide.md), then [the rest](references/lost.md). "
+        "skills/demo/SKILL.md": "---\nname: demo\n---\nRead [the guide](references/guide.md), then [the rest](references/lost.md) "
+                                "and [my notes](references/local-only.md). "
                                 "In your repo, edit `.claude/settings.json` and `docs/X.md`; "
                                 "a finance skill would keep `references/finance.md`. See [the docs](URL), or ask @john.doe.\n",
         "skills/demo/references/guide.md": "Run [the tool](../scripts/tool.py), not [this one](../scripts/missing.py).\n",
         "skills/demo/scripts/tool.py": "",
         # Agents, commands and skills under .claude/ describe this repo, so every pointer is walked.
-        ".claude/agents/reviewer.md": "Review against `src/app/main.ts` and `src/app/agent_gone.ts`.\n",
+        ".claude/agents/reviewer.md": "Review against `src/app/main.ts` and `src/app/agent_gone.ts`. Ask @jane.smith first.\n",
         ".claude/skills/local/SKILL.md": "Use [tips](notes/tips.md) and [more](notes/missing.md) here, then `src/app/local_gone.ts`.\n",
         ".claude/skills/local/notes/tips.md": "",
         # A worktree Claude Code made: a copy of the repo, not more docs to audit.
@@ -936,7 +967,11 @@ def self_test_repo() -> tuple[list[tuple[str, bool, str]], set[str]]:
             "---", "authority: binding", "status: live", "---", "## Rules",
             "- Never edit an applied migration. Enforced by `src/app/main.ts`.",
             "- Keep billing frozen", "  until the audit ends.",
-            "- Use uv (intent, not enforced).", "", "## Notes", "- a note, not a rule", ""]),
+            "- Use uv (intent, not enforced).", "", "## Notes", "- a note, not a rule",
+            "# Team rules", "- an intro, not a rule", "## Where the rules live", "- in the rules folder", ""]),
+        # Folders called build under .claude/ are rules and skills, not build output.
+        ".claude/rules/build/deep.md": '---\npaths:\n  - "src/**"\n---\nSee `src/app/build_rule_gone.ts`.\n',
+        ".claude/skills/build/SKILL.md": "Read [the steps](steps_absent.md).\n",
     }
     with tempfile.TemporaryDirectory() as t:
         p = Path(t) / "repo"
@@ -946,6 +981,7 @@ def self_test_repo() -> tuple[list[tuple[str, bool, str]], set[str]]:
         (p / "scratch").mkdir()
         (p / "scratch" / "notes.txt").write_text("", encoding="utf-8")    # on disk, never added, not ignored
         (p / "scratch" / "CLAUDE.md").write_text("- local rule\n", encoding="utf-8")   # an agent file never added
+        (p / "skills" / "demo" / "references" / "local-only.md").write_text("", encoding="utf-8")   # linked, never added
         try:
             ok = git(p, "init", "-q").returncode == 0
             # --info-only indexes the files without writing git objects: nothing but the index to clean up.
@@ -961,6 +997,15 @@ def self_test_repo() -> tuple[list[tuple[str, bool, str]], set[str]]:
         except Exception as e:
             crash = f"{e.__class__.__name__}: {e}"
         cen = dict(census(p))
+        # A single-skill repo: SKILL.md at the root covers only itself.
+        solo = Path(t) / "solo"
+        for name, body in {"SKILL.md": "Read [the guide](gone_root_skill.md).\n",
+                           "README.md": "Start in `src/solo_nope.ts`.\n",
+                           "docs/history.md": "Old: [notes](removed_history.md).\n"}.items():
+            (solo / name).parent.mkdir(parents=True, exist_ok=True)
+            (solo / name).write_text(body, encoding="utf-8")
+        rs = Report()
+        check_repo(solo, rs)
     fs = r.findings
 
     def at(where: str, check: str = "", level: str = "", text: str = "") -> list[dict]:
@@ -969,6 +1014,12 @@ def self_test_repo() -> tuple[list[tuple[str, bool, str]], set[str]]:
 
     def said(text: str) -> list[dict]:
         return [f for f in fs if text in f["msg"]]
+    try:
+        unknown = "-".join(["no", "such", "check"])        # not a literal, or it would count as a check
+        Report().add("WARN", unknown, "x", "a name the self-test can't count")
+        refused_unknown = False
+    except ValueError:
+        refused_unknown = True
     rules = ".claude/rules/"
     only_warn = lambda w: bool(at(rules + w, "rule-dead-scope", "WARN")) and not at(rules + w, level="FAIL")
     return [
@@ -1021,6 +1072,18 @@ def self_test_repo() -> tuple[list[tuple[str, bool, str]], set[str]]:
          and not said("notes/tips.md"), str(at(".claude/skills/local/SKILL.md"))),
         ("rule-unenforced-warns", [f["where"] for f in fs if f["check"] == "rule-unenforced"] == ["binding/AGENTS.md:7"]
          and "until the audit ends" in str(said("Keep billing frozen")), str([f for f in fs if f["check"] == "rule-unenforced"])),
+        ("unknown-check-name-refused", refused_unknown, "Report.add accepted a name no .add() call spells out"),
+        ("skill-link-untracked-fails", bool(at("skills/demo/SKILL.md", "walk-test", "FAIL", "isn't tracked"))
+         and "references/local-only.md" in str(said("isn't tracked")), str(said("local-only"))),
+        ("dot-claude-no-at-imports", not said("jane.smith"), str(said("jane"))),
+        ("rule-heading-strict", not said("an intro") and not said("in the rules folder"), str(said("intro") + said("rules folder"))),
+        ("dot-claude-build-folders-walked", bool(at(".claude/rules/build/deep.md", "walk-test", "FAIL", "build_rule_gone"))
+         and bool(at(".claude/skills/build/SKILL.md", "walk-test", "FAIL", "steps_absent")) and ".claude/skills/build/SKILL.md" in cen,
+         str(said("build_rule_gone") + said("steps_absent"))),
+        ("census-matches-severity", "FAILs" in cen.get(".claude/skills/local/SKILL.md", ""), cen.get(".claude/skills/local/SKILL.md", "")),
+        ("root-skill-covers-itself",
+         sorted((f["level"], f["where"]) for f in rs.findings if f["check"] == "walk-test") == [("FAIL", "SKILL.md"), ("WARN", "README.md")],
+         str(rs.findings)),
         ("worktrees-skipped", not said("worktree_gone") and not [f for f in fs if "worktrees" in f["where"]],
          str([f for f in fs if "worktree" in f["where"] + f["msg"]])),
         ("nested-repo-skipped", not said("nested_gone") and not [f for f in fs if f["where"].startswith("vendor/")],

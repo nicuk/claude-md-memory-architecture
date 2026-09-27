@@ -10,8 +10,9 @@ the script had 24. The privacy grep missed three ways to import a network module
 inside the skill's own folder went unchecked.
 
 **Added**
-- `rule-unenforced`: in a `binding` doc, a rule under a Rules heading that doesn't say
-  "Enforced by" and name its check, or say it isn't enforced, is a warning.
+- `rule-unenforced`: in a `binding` doc, a rule under a Rules heading (`## Rules`, `## Hard
+  rules`; not a title that mentions rules) that doesn't say "Enforced by" and name its check, or
+  say it isn't enforced, is a warning.
 - A skill's markdown links must resolve, because its folder ships as it is. Its backticked
   paths are skipped: on Claude Code's own plugin-dev skills they were examples, not links, 27
   times out of 27. So are `@` names (a CLAUDE.md feature; in a skill, `@john.doe` is a person)
@@ -19,17 +20,23 @@ inside the skill's own folder went unchecked.
   Tested on the public `anthropics/skills` and `anthropics/claude-code` repos: no FAILs from any
   of it, and 47 false warnings on `anthropics/skills` are gone (README files inside a skill name
   paths relative to the skill's folder, which is where the agent reads them).
-- Agents, commands, skills and output styles under `.claude/` are walked; a dead pointer there is
-  a warning. `.claude/worktrees/` and any nested repository are skipped: they are copies, not docs.
+- Agents, commands, skills and output styles under `.claude/` are walked. A dead link in a skill
+  there fails like any skill's; other dead pointers there are warnings, and `@name` there is a
+  person, not an import. `.claude/worktrees/` and nested repositories are skipped: they are copies.
+- A skill link to a file that exists locally but isn't tracked fails: installers never get it.
+  A `SKILL.md` at the repo root covers only itself, not the whole repo.
 - `--census` lists every markdown file and how the walk test covers it.
 - `--strict` exits 1 on warnings too, for CI.
 - CI reads the script's code to prove it's read-only and offline (`check_privacy.py`), and
   checks the numbers and release facts the docs state against their source (`check_claims.py`).
-  Each has its own planted-case self-test.
+  Each has its own planted-case self-test. The privacy check also refuses renamed imports
+  (`import subprocess as sp`), a process started outside the `git()` helper, and writes
+  through `io.open`, `codecs.open` or `os.open`.
 
 **Changed**
-- The self-test reads the check names from the script, so a check without a planted defect
-  fails it. `global-budget` and `agent-file-untracked` now have one: 25 checks, all planted.
+- The self-test reads the check names from the script's syntax tree, and reporting a check
+  under any other name raises, so a check without a planted defect fails the self-test.
+  `global-budget` and `agent-file-untracked` now have one: 25 checks, all planted.
 - The demo's check count comes from the script.
 - `AGENTS.md`: each rule names its enforcer or says it has none, and the repo's own audit
   runs with `--strict`.
