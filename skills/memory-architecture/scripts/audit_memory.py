@@ -7,10 +7,18 @@ right layer? is it still true?) stay with the agent reading the report.
 
 Usage:
   python audit_memory.py --repo PATH [--memory-dir PATH] [--global-file PATH] [--json]
+  python audit_memory.py --memory-dir PATH --draft-index [--force]
 
 Every check prints FAIL (a breach), WARN (worth a look) or nothing. Exit code
 is 1 if any FAIL, else 0. A check that has never failed has never been tested:
 run with --self-test to watch each one fire against a synthetic tree.
+
+The audit only reads. The one exception is --draft-index, which writes a
+proposed trimmed index to <memory-dir>/MEMORY.draft.md and nothing else: one
+hook-length line per memory file, in the index's order, orphans appended,
+duplicates and dead links dropped. It never touches MEMORY.md and refuses to
+overwrite an existing draft unless --force is given. A human reviews the draft
+and replaces MEMORY.md with it by hand.
 """
 from __future__ import annotations
 
@@ -33,6 +41,9 @@ GLOBAL_MAX_LINES = 60           # loaded into every session in every repo
 ROOT_CLAUDE_MAX_LINES = 300     # past this, it gets skimmed
 FOLDER_CLAUDE_MAX_LINES = 60    # a folder file carries local invariants only
 MEMORY_FILE_MAX_BYTES = 4000    # one fact; longer means several facts
+DRAFT_LINE_MAX_CHARS = 150      # --draft-index: a hook is what it is and when it matters
+DRAFT_TITLE_MAX_CHARS = 60      # --draft-index: leaves most of the line for the hook
+DRAFT_NAME = "MEMORY.draft.md"  # the only file this script ever writes outside --self-test
 
 SKIP_DIRS = {"node_modules", ".git", ".next", "dist", "build", ".venv", "venv",
              "__pycache__", ".turbo", "coverage", ".claude"}
@@ -75,6 +86,11 @@ def frontmatter(text: str) -> dict[str, str]:
     return out
 
 
+def memory_files(mem: Path) -> list[Path]:
+    """Memory topic files: every .md in the folder except the index and a pending draft of it."""
+    return sorted(p for p in mem.glob("*.md") if p.name not in {"MEMORY.md", DRAFT_NAME})
+
+
 def rule_paths(text: str) -> list[str]:
     """The `paths:` globs of a .claude/rules file, inline or as a YAML list."""
     if not text.startswith("---"):
@@ -102,7 +118,7 @@ def rule_paths(text: str) -> list[str]:
 
 def check_memory_dir(mem: Path, r: Report) -> None:
     index = mem / "MEMORY.md"
-    files = sorted(p for p in mem.glob("*.md") if p.name != "MEMORY.md")
+    files = memory_files(mem)
     if not index.exists():
         if files:
             r.add("FAIL", "index-missing", str(mem), f"{len(files)} memory files but no MEMORY.md index — none of them will be found")
@@ -179,6 +195,146 @@ def check_memory_dir(mem: Path, r: Report) -> None:
         for target in re.findall(r"\[\[([^\]]+)\]\]", read(f)):
             if target not in all_names:
                 r.add("WARN", "memory-dangling-link", str(f), f"[[{target}]] has no memory yet (fine if intended as a to-write marker)")
+
+
+# ---------------------------------------------------------------- draft index
+
+INDEX_ENTRY = re.compile(r"\[([^\]]*)\]\(([^)]+\.md)\)")
+ANY_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+
+
+def shorten(text: str, limit: int) -> str:
+    """Collapse whitespace; if still over `limit` chars, cut at a word boundary and add an ellipsis."""
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    cut = text[:max(limit - 1, 0)]
+    space = cut.rfind(" ")
+    if space > limit // 2:          # a boundary that still keeps most of the text
+        cut = cut[:space]
+    return cut.rstrip(" ,;:.-–—(") + "…"
+
+
+def description_of(body: str) -> str:
+    """The `description` frontmatter value, including a YAML folded/literal block (`>` or `|`)."""
+    desc = frontmatter(body).get("description", "").strip("'")
+    if desc not in {">", "|", ">-", "|-", ">+", "|+"}:
+        return desc
+    block = body[3:body.find("\n---", 3)].splitlines()
+    for i, line in enumerate(block):
+        if re.match(r"^\s*description\s*:", line):
+            rest = []
+            for more in block[i + 1:]:
+                if more.strip() and not more[:1].isspace():
+                    break
+                rest.append(more.strip())
+            return " ".join(x for x in rest if x)
+    return ""
+
+
+def draft_line(name: str, title: str, hook: str) -> str:
+    title = shorten(title.replace("[", "(").replace("]", ")"), DRAFT_TITLE_MAX_CHARS) or Path(name).stem
+    prefix = f"- [{title}]({name})"
+    room = DRAFT_LINE_MAX_CHARS - len(prefix) - 3     # 3 = " — "
+    hook = shorten(hook, room) if room >= 10 else ""  # a very long file name leaves no room for a hook
+    return f"{prefix} — {hook}" if hook else prefix
+
+
+def build_draft(mem: Path) -> tuple[str, dict]:
+    """A trimmed index: the index's headings and order, one hook-length line per memory file,
+    duplicates and dead links dropped, orphans appended at the end."""
+    index = mem / "MEMORY.md"
+    text = read(index) if index.exists() else ""
+    files = {p.name: p for p in memory_files(mem)}
+    items: list[tuple[str, str]] = []   # ("head", line) or ("entry", file name)
+    titles: dict[str, str] = {}
+    index_hooks: dict[str, str] = {}
+    st = {"on_disk": len(files), "duplicates": 0, "dead": 0}
+    for line in text.splitlines():
+        if line.lstrip().startswith("#"):
+            items.append(("head", line.strip()))
+            continue
+        entries = list(INDEX_ENTRY.finditer(line))
+        for i, m in enumerate(entries):
+            name = Path(m.group(2)).name
+            if name not in files:
+                st["dead"] += 1
+                continue
+            if name in titles:
+                st["duplicates"] += 1
+                continue
+            end = entries[i + 1].start() if i + 1 < len(entries) else len(line)
+            titles[name] = m.group(1).strip()
+            index_hooks[name] = ANY_LINK.sub(r"\1", line[m.end():end]).strip(" \t-:|–—")
+            items.append(("entry", name))
+    st["indexed"] = len(titles)
+    orphans = [n for n in files if n not in titles]
+    st["orphans"] = len(orphans)
+    indexed_items = len(items)          # headings are judged on indexed entries only, so orphans
+    items += [("entry", n) for n in orphans]   # land at the end under no heading of their own
+
+    out: list[str] = []
+    for i, (kind, val) in enumerate(items):
+        if kind == "head":
+            # Keep a heading only if an entry follows before the next heading at its level or above.
+            level = len(val) - len(val.lstrip("#"))
+            for kind2, val2 in items[i + 1:indexed_items]:
+                if kind2 == "entry":
+                    out.append(val)
+                    break
+                if len(val2) - len(val2.lstrip("#")) <= level:
+                    break
+            continue
+        body = read(files[val])
+        hook = description_of(body) or index_hooks.get(val, "")
+        title = titles.get(val) or frontmatter(body).get("name") or Path(val).stem
+        out.append(draft_line(val, title, hook))
+    st["linked"] = sum(k == "entry" for k, _ in items)
+    return "".join(line + "\n" for line in out), st
+
+
+def draft_index(mem: Path, force: bool = False, log=print) -> int:
+    """Write <mem>/MEMORY.draft.md, the only file this script writes. MEMORY.md is never opened for writing."""
+    if not mem.is_dir():
+        log(f"--draft-index: {mem} is not a folder")
+        return 2
+    index, out = mem / "MEMORY.md", mem / DRAFT_NAME
+    draft, st = build_draft(mem)
+    if not st["on_disk"]:
+        log(f"--draft-index: no memory files in {mem}; nothing to index")
+        return 2
+    try:
+        # "x" creates or fails atomically, so a draft someone is reviewing is never clobbered.
+        with open(out, "w" if force else "x", encoding="utf-8", newline="\n") as fh:
+            fh.write(draft)
+    except FileExistsError:
+        log(f"refusing: {out} already exists. Review or delete it, or pass --force to overwrite it.")
+        return 1
+
+    def size(label: str, b: int, n: int) -> str:
+        return f"{label} {b:>7,} bytes, {n:>4} lines, ~{b // 4:,} tokens (~ estimate: bytes/4)"
+
+    before = index.read_bytes() if index.exists() else b""
+    after = draft.encode("utf-8")
+    nb, na = len(before.decode("utf-8", "replace").splitlines()), len(draft.splitlines())
+    log(size("before  MEMORY.md      ", len(before), nb))
+    log(size("after   MEMORY.draft.md", len(after), na))
+    log(f"memories: {st['on_disk']} on disk, {st['indexed']} linked before, {st['linked']} linked in the draft "
+        f"(orphans appended: {st['orphans']}, duplicate entries dropped: {st['duplicates']}, "
+        f"dead links dropped: {st['dead']})")
+    within = len(after) <= INDEX_MAX_BYTES
+    cap = na <= INDEX_HARD_LINES and len(after) <= INDEX_HARD_BYTES
+    log(f"draft is {'within' if within else 'OVER'} the {INDEX_MAX_BYTES:,}-byte index budget, and "
+        f"{'within' if cap else 'PAST'} the {INDEX_HARD_LINES}-line / {INDEX_HARD_BYTES:,}-byte load cap")
+    longest = max((len(line) for line in draft.splitlines()), default=0)
+    if longest > DRAFT_LINE_MAX_CHARS:
+        log(f"note: longest line is {longest} chars; a long title or file name leaves no room to trim further")
+    if not within and st["linked"]:
+        log(f"trimming hooks alone can't fit {st['linked']} memories in {INDEX_MAX_BYTES:,} bytes "
+            f"(~{INDEX_MAX_BYTES // st['linked']} bytes a line). Merge related memories, or move a cluster "
+            f"into a repo doc behind one router line.")
+    log(f"wrote {out}\nMEMORY.md was not changed. Review the draft, then replace MEMORY.md with it yourself.")
+    return 0
 
 
 # ---------------------------------------------------------------- global file
@@ -311,11 +467,89 @@ def self_test() -> int:
         missing = expected - fired
         for c in sorted(expected):
             print(f"{'ok  ' if c in fired else 'MISS'} {c}")
-        if missing:
-            print(f"\nself-test FAILED: {len(missing)} check(s) never fired", file=sys.stderr)
-            return 1
-        print(f"\nself-test passed: all {len(expected)} planted defects detected")
-        return 0
+    cases = self_test_draft()
+    print()
+    for name, ok, detail in cases:
+        print(f"{'ok  ' if ok else 'FAIL'} {name}" + ("" if ok else f": {detail}"))
+    broken = [c for c in cases if not c[1]]
+    if missing or broken:
+        print(f"\nself-test FAILED: {len(missing)} check(s) never fired, {len(broken)} --draft-index case(s) failed",
+              file=sys.stderr)
+        return 1
+    print(f"\n--draft-index: all {len(cases)} cases held")
+    print(f"self-test passed: all {len(expected)} planted defects detected")
+    return 0
+
+
+def self_test_draft() -> list[tuple[str, bool, str]]:
+    """Plant a bloated index (long lines, a duplicate, a dead link, an orphan) and check the draft."""
+    # 9-char stride, so a hard cut at the hook's room lands mid-word; the word-boundary check depends
+    # on that (a stride that divides the room evenly let a broken shorten() pass, 2026-09-27).
+    words = " ".join(f"token{i:03}" for i in range(50))
+    fillers = [f"f{i:02}.md" for i in range(1, 11)]
+    with tempfile.TemporaryDirectory() as t:
+        mem = Path(t) / "mem"
+        mem.mkdir()
+        def put(name: str, fm: str) -> None:
+            (mem / name).write_text(f"---\n{fm}\nmetadata:\n  type: project\n---\nbody\n", encoding="utf-8")
+        put("zeta.md", f"name: zeta\ndescription: {words}")
+        put("alpha.md", "name: alpha")                                 # no description: hook falls back to the index
+        put("mid.md", "name: mid\ndescription: >\n  a folded\n  description")
+        for f in fillers:
+            put(f, f"name: {f}")                                       # hook comes from its long index line
+        put("aa-orphan.md", "name: orphan\ndescription: on disk, never indexed")
+        lines = ["# Memory Index",
+                 f"- [Zeta](zeta.md) — {words}",
+                 f"- [Alpha](alpha.md) — INDEXHOOK {words}",
+                 f"- [Zeta again](zeta.md) — {words}",
+                 f"- [Mid](mid.md) — {words}"]
+        lines += [f"- [Filler {f}]({f}) — {words}" for f in fillers]
+        lines += ["## Old", f"- [Gone](gone.md) — {words}"]      # a section left holding only a dead link
+        index = mem / "MEMORY.md"
+        index.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        before, mtime = index.read_bytes(), index.stat().st_mtime_ns
+        draft_path = mem / DRAFT_NAME
+        quiet = lambda *_: None
+
+        rc1 = draft_index(mem, log=quiet)
+        draft = draft_path.read_text(encoding="utf-8") if draft_path.exists() else ""
+        draft_lines = draft.splitlines()
+        links = [Path(m.group(2)).name for m in INDEX_ENTRY.finditer(draft)]
+        on_disk = sorted(p.name for p in memory_files(mem))
+        by_name = {Path(m.group(2)).name: line for line in draft_lines for m in [INDEX_ENTRY.search(line)] if m}
+
+        draft_path.write_text("REVIEWED\n", encoding="utf-8")         # a human is part-way through reviewing
+        rc2 = draft_index(mem, log=quiet)
+        kept = draft_path.read_text(encoding="utf-8")
+        rc3 = draft_index(mem, force=True, log=quiet)
+        forced = draft_path.read_text(encoding="utf-8")
+        r = Report()
+        check_memory_dir(mem, r)
+
+        size = len(draft.encode("utf-8"))
+        zeta_hook = by_name.get("zeta.md", "").partition(" — ")[2]
+        stem = zeta_hook.rstrip("…")
+        order = ["zeta.md", "alpha.md", "mid.md"] + fillers + ["aa-orphan.md"]
+        return [
+            ("draft-under-budget", rc1 == 0 and len(before) > INDEX_MAX_BYTES and size <= INDEX_MAX_BYTES
+             and len(draft_lines) <= INDEX_HARD_LINES, f"rc={rc1}, index {len(before)} bytes -> draft {size} bytes"),
+            ("draft-line-length", bool(draft_lines) and all(len(x) <= DRAFT_LINE_MAX_CHARS for x in draft_lines),
+             f"longest {max((len(x) for x in draft_lines), default=0)} chars"),
+            ("draft-links-each-once", sorted(links) == on_disk, f"links {sorted(links)} vs on disk {on_disk}"),
+            ("draft-keeps-order", links == order and "## Old" not in draft and draft_lines[:1] == ["# Memory Index"],
+             f"got {links}; headings {[x for x in draft_lines if x.startswith('#')]}"),
+            ("draft-hook-source", zeta_hook.endswith("…") and words.startswith(stem) and words[len(stem):len(stem) + 1] == " "
+             and "INDEXHOOK" in by_name.get("alpha.md", "") and by_name.get("mid.md", "").endswith("a folded description"),
+             f"zeta={zeta_hook[-24:]!r} (want a whole-word cut + ellipsis), alpha has index text="
+             f"{'INDEXHOOK' in by_name.get('alpha.md', '')}, mid={by_name.get('mid.md', '')[-24:]!r}"),
+            ("draft-memory-untouched", index.read_bytes() == before and index.stat().st_mtime_ns == mtime,
+             "MEMORY.md changed"),
+            ("draft-refuses-overwrite", rc2 != 0 and kept == "REVIEWED\n" and rc3 == 0 and forced != kept,
+             f"without --force rc={rc2}, draft kept={kept == 'REVIEWED' + chr(10)}; with --force rc={rc3}"),
+            ("draft-not-self-linked", DRAFT_NAME not in forced and forced == draft
+             and not any(DRAFT_NAME in f["where"] for f in r.findings),
+             "the draft indexed itself, or the audit counted it as a memory"),
+        ]
 
 
 def main() -> int:
@@ -325,6 +559,9 @@ def main() -> int:
     ap.add_argument("--global-file", type=Path)
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--self-test", action="store_true")
+    ap.add_argument("--draft-index", action="store_true",
+                    help=f"write a trimmed index to <memory-dir>/{DRAFT_NAME} for review; never touches MEMORY.md")
+    ap.add_argument("--force", action="store_true", help=f"with --draft-index: overwrite an existing {DRAFT_NAME}")
     a = ap.parse_args()
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -333,6 +570,12 @@ def main() -> int:
 
     if a.self_test:
         return self_test()
+    if a.draft_index:
+        if not a.memory_dir or a.repo or a.global_file or a.json:
+            ap.error("--draft-index takes --memory-dir only (plus --force)")
+        return draft_index(a.memory_dir.expanduser(), force=a.force)
+    if a.force:
+        ap.error("--force only applies to --draft-index")
     if not (a.repo or a.memory_dir or a.global_file):
         ap.error("give at least one of --repo, --memory-dir, --global-file")
 

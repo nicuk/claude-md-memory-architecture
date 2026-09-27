@@ -1,6 +1,6 @@
 ---
 name: memory-architecture
-description: Keeps coding-agent memory cheap and true, so Claude stops forgetting between sessions, re-reading bloated CLAUDE.md files, redoing research it already did, and acting on stale notes. Decides which layer each fact belongs in (global or project CLAUDE.md, AGENTS.md, folder files, path-scoped .claude/rules, auto memory MEMORY.md, repo docs, generated status files, deny rules and hooks), how to write and read it, and the gates that stop it rotting. Ships a self-testing audit script and a 0-10 score. Use it whenever someone wants to set up, audit, score, slim down or clean up CLAUDE.md, AGENTS.md, a memory folder or per-folder docs, or asks about context engineering; says Claude keeps forgetting, redoing work, ignoring CLAUDE.md or burning tokens; asks where a rule or fact should live; or is about to save a memory or write an agent-facing doc, even if they never say "memory".
+description: Keeps coding-agent memory cheap and true, so Claude stops forgetting between sessions, re-reading bloated CLAUDE.md files, redoing research it already did, and acting on stale notes. Decides which layer each fact belongs in (global or project CLAUDE.md, AGENTS.md, folder files, path-scoped .claude/rules, MEMORY.md, repo docs, deny rules and hooks) and the gates that stop it rotting. Ships a self-testing audit script and a 0-10 score. Use it before touching any of those files by hand: whenever someone wants to set up, audit, slim down or clean up CLAUDE.md, AGENTS.md or a memory folder; asks which CLAUDE.md files actually load; wants Claude Code, Cursor and Codex to follow the same rules; says an agent keeps breaking a rule it was given, keeps forgetting, redoes work or burns tokens; asks where a rule or fact should live; or is about to save a memory or write an agent-facing doc, even if they never say "memory".
 ---
 
 # Memory architecture for coding agents
@@ -220,6 +220,22 @@ FAIL means a breach (an orphaned memory, a truncated index, a dead pointer in a 
 doc). WARN means worth a look. Budgets live at the top of the script as named constants,
 so change them on purpose rather than ignoring the warnings.
 
+When `index-budget`, `index-line-length`, `index-truncated`, `index-duplicate` or
+`memory-orphan` fire, fix the index with a draft rather than by hand:
+
+```bash
+python <skill-dir>/scripts/audit_memory.py --memory-dir <memory-dir> --draft-index
+```
+
+It writes `MEMORY.draft.md` next to the index: one line of at most about 150 characters
+per memory file, with the hook taken from the file's `description` (or the old index text),
+the index's order kept, orphans appended, duplicates and dead links dropped. It prints
+bytes, lines and estimated tokens before and after, and whether the draft fits the budget
+and the load cap. It never touches `MEMORY.md` and won't overwrite an earlier draft
+without `--force`. **A human reviews the draft before it replaces `MEMORY.md`:** a hook
+rebuilt from `description` can lose a word the owner relied on. If the draft is still over
+budget, trimming can't fix it; merge memories or move a cluster into a repo doc.
+
 Then score. Each item is worth 1 point, or 0.5 if only partly met. Cite evidence for each
 item; don't grade on impression. If you can't see something (for example, you were given
 only the memory folder and not the repo), mark those items N/A, rescale over the items in
@@ -250,6 +266,9 @@ Maintenance happens when you touch memory, not on a schedule:
 - When a memory proves wrong, fix or delete it now.
 - When the index nears its budget, merge related memories or move clusters into a repo doc
   with a single router line.
+- When index lines have grown into findings, or memories have fallen out of the index, run
+  `--draft-index`, show the owner the draft, and replace `MEMORY.md` with it only once they
+  approve.
 - When the same investigation happens twice, that is the trigger for a registry.
 
 Don't run repo-wide sweeps by default. A full audit is a decision the owner makes.

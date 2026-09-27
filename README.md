@@ -108,12 +108,23 @@ check fires. A check that has never failed has never been tested. The self-test 
 the top runs it on every push, along with a check that the script imports nothing that
 can reach the network.
 
+If your memory index is over budget, `--draft-index` proposes a trimmed one. It writes
+`MEMORY.draft.md` next to your index, with one short line per memory and none lost, and
+prints the size before and after. It never changes `MEMORY.md`: you read the draft and
+swap it in yourself.
+
+```
+python skills/memory-architecture/scripts/audit_memory.py --draft-index \
+  --memory-dir ~/.claude/projects/<project>/memory
+```
+
 ## What it runs, and what it doesn't
 
-- It only reads files. The script reads the paths you pass it, and runs `git ls-files`
-  in `--repo` to see what is tracked.
-- It writes nothing to your project, except that `--self-test` writes a temporary folder
-  and deletes it.
+- It reads only the paths you pass it, and runs `git ls-files` in `--repo` to see what
+  is tracked.
+- It writes nothing, with two exceptions: `--self-test` writes a temporary folder and
+  deletes it, and `--draft-index` writes one file, `MEMORY.draft.md`, in the memory folder
+  you name. It never overwrites `MEMORY.md`.
 - It makes no network calls, and there's no server or API key. Nothing leaves your
   machine.
 - Everything else is instructions for Claude in `SKILL.md` and `references/`.
