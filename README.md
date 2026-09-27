@@ -131,6 +131,8 @@ python skills/memory-architecture/scripts/audit_memory.py --draft-index \
 
 ## Evidence
 
+**Case study:** [The memory index that cost 2,500 tokens a session, and hid an "active" plan](https://github.com/nicuk/cairn-principles/blob/main/case-studies/memory-index-that-cost-every-session.md).
+
 The rules come from about fifteen repositories worked with coding agents between June
 and September 2026. Every rule has an incident behind it, recorded in
 `skills/memory-architecture/references/incidents.md`.

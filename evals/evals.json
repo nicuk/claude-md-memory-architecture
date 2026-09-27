@@ -1,0 +1,61 @@
+{
+  "skill_name": "memory-architecture",
+  "skill_path": "skills/memory-architecture",
+  "fixture_note": "<fixture> is the OUT_DIR you passed to build_fixture.py, copied somewhere the run cannot see evals/. The audit eval was first run on a copy of a real, private memory folder; the fixture here is a synthetic stand-in with the same planted pathologies and invented content. The routing eval needs no fixture.",
+  "evals": [
+    {
+      "id": 1,
+      "name": "audit-bloated-store",
+      "prompt": "my claude memory folder for my forecasting project feels bloated and every session seems to burn tokens re-reading it, and claude still redoes stuff. it's at <fixture>/forecast-memory . check it from 0 to 10 and tell me exactly what to fix. also should i add a CLAUDE.md in every folder of the repo to help?",
+      "expected_output": "An evidence-backed 0-10 score, the orphaned memory named, index cost quantified with the load cap, a router/registry fix for repeated work, and a 'no, only where a local invariant exists' on per-folder files.",
+      "files": ["<fixture>/forecast-memory"],
+      "planted": {
+        "orphan": "pooled-shops-next-step.md is on disk, is not linked from MEMORY.md, and calls itself the ACTIVE branch; it is also stale, since pooled-test-failed.md records that the pooled test ran and failed",
+        "competing-current": "four files claim to be the current direction: explainer-product-direction.md (ACTIVE DIRECTION), bake-quantity-decision.md (LEAD CANDIDATE), shared-model-growth-loop.md (NORTH STAR), pooled-shops-next-step.md (ACTIVE, the orphan)",
+        "index-cost": "MEMORY.md is 9,589 bytes (~2,400 tokens) in 34 lines; 28 lines are over 200 characters because each hook carries the finding",
+        "duplicate": "model-search-status.md is indexed twice, under two titles with different hooks",
+        "oversized": "six files over 4 KB each hold many facts: input-ideas-backlog.md (~26.5 KB), ensemble-ab-v3.md (~11.9 KB), bake-quantity-decision.md (~11.5 KB), public-data-inputs-done.md (~6.0 KB), explainer-product-direction.md (~5.3 KB), model-search-status.md (~5.1 KB)",
+        "relative-date": "cloud-bill-spike.md says the job was switched to every 20 minutes 'last week'"
+      },
+      "assertions": [
+        {"id": "names-orphan", "text": "Names pooled-shops-next-step.md as present on disk but missing from MEMORY.md"},
+        {"id": "quantifies-index", "text": "Quantifies the index cost (about 10KB or about 2,500 tokens per session) and names long index lines as the cause"},
+        {"id": "knows-load-cap", "text": "Mentions that only the first 200 lines / 25KB of MEMORY.md load"},
+        {"id": "no-folder-sprawl", "text": "Advises against a CLAUDE.md in every folder; only where a local invariant exists (or path-scoped rules)"},
+        {"id": "evidence-score", "text": "Gives a numeric 0-10 score tied to specific evidence per criterion"},
+        {"id": "router-fix", "text": "Recommends moving research findings into a tracked repo doc/registry with a short pointer memory, to stop re-work"},
+        {"id": "fixture-untouched", "text": "The fixture folder is byte-identical after the run"}
+      ]
+    },
+    {
+      "id": 2,
+      "name": "route-new-repo",
+      "prompt": "starting a new FastAPI repo tomorrow w/ claude code. where should each of these live so claude actually remembers and doesn't waste tokens: (a) we use uv not pip (b) alembic migrations are append-only, never edit an applied one (c) i like terse answers, no preamble (d) the competitor pricing research i did last week, ~20 numbers with sources (e) the billing/ folder is frozen until Q4 because of an audit. and do i need a CLAUDE.md in each folder? show me the actual files.",
+      "expected_output": "Each fact routed to the cheapest layer that will still be found, with file contents; no per-folder sprawl.",
+      "files": [],
+      "assertions": [
+        {"id": "uv-root", "text": "(a) uv goes in the project root CLAUDE.md"},
+        {"id": "migrations-scoped", "text": "(b) goes in a path-scoped .claude/rules file with a migrations glob, or a CLAUDE.md inside the migrations folder"},
+        {"id": "terse-global", "text": "(c) goes in the global ~/.claude/CLAUDE.md"},
+        {"id": "research-registry", "text": "(d) goes in a tracked repo doc (not CLAUDE.md body, not a memory body), with a one-line pointer to it"},
+        {"id": "billing-local", "text": "(e) goes in billing/CLAUDE.md or a path-scoped rule for billing/**, not the root file"},
+        {"id": "absolute-dates", "text": "Converts 'last week' and/or 'Q4' into absolute dates or flags that they must be made absolute"},
+        {"id": "no-per-folder", "text": "Answers no to a CLAUDE.md in every folder"}
+      ]
+    }
+  ],
+  "published_results": {
+    "date": "2026-09-26",
+    "runs_per_configuration": 1,
+    "note": "Eval 1 was graded on the private folder, not on this synthetic fixture. Its orphan had a different name; the assertion text above is otherwise unchanged.",
+    "audit-bloated-store": {
+      "with_skill": {"passed": 6, "total": 7, "failed": ["knows-load-cap"]},
+      "without_skill": {"passed": 5, "total": 7, "failed": ["knows-load-cap", "router-fix"]}
+    },
+    "route-new-repo": {
+      "with_skill": {"passed": 7, "total": 7, "failed": []},
+      "without_skill": {"passed": 5, "total": 7, "failed": ["migrations-scoped", "billing-local"]}
+    },
+    "overall": {"with_skill": "13/14 (93%)", "without_skill": "10/14 (71%)"}
+  }
+}
