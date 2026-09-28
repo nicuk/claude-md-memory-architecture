@@ -11,8 +11,9 @@ Usage:
   python audit_memory.py --repo PATH --census
   python audit_memory.py --memory-dir PATH --draft-index [--force]
 
---project audits the repo at PATH, its Claude Code memory folder and the global
-CLAUDE.md, finding the folders itself (it lists ~/.claude/projects to do so).
+--project audits the git repo that PATH is in, its Claude Code memory folder and the
+global CLAUDE.md. It finds them itself: it reads .git files to find the repo's root and main
+checkout, and lists the folder names in ~/.claude/projects (or $CLAUDE_CONFIG_DIR/projects).
 
 Every check prints FAIL (a breach), WARN (worth a look) or nothing. Exit code
 is 1 if any FAIL (or, with --strict, any WARN), else 0. A check that has never
@@ -31,6 +32,8 @@ from __future__ import annotations
 
 import argparse
 import ast
+import contextlib
+import io
 import json
 import os
 import re
@@ -269,36 +272,54 @@ def claude_home() -> Path:
     return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude").expanduser()
 
 
+def repo_root(start: Path) -> Path:
+    """The nearest folder at or above `start` that holds a `.git`: Claude Code keys a project's memory
+    to its repository, so a subfolder shares it. A folder outside any repository is its own root."""
+    for d in (start, *start.parents):
+        if (d / ".git").exists():
+            return d
+    return start
+
+
 def main_checkout(repo: Path) -> Path:
-    """The main checkout a worktree belongs to, read from its `.git` file: all worktrees of one
-    repo share one memory folder, keyed to the main checkout. Any other folder is its own."""
+    """The main checkout a worktree belongs to, as git records it: the worktree's `.git` file names
+    its git dir, whose `commondir` names the repository's shared `.git`. All worktrees of a repo share
+    one memory folder, keyed to that main checkout. Any other layout is its own folder."""
     dot_git = repo / ".git"
     if dot_git.is_file():
         m = re.match(r"gitdir:\s*(.+)", read(dot_git).strip())
         if m:
             gitdir = Path(m.group(1).strip())
             gitdir = gitdir if gitdir.is_absolute() else (repo / gitdir).resolve()
-            if gitdir.parent.name == "worktrees":        # <main>/.git/worktrees/<name>
-                return gitdir.parent.parent.parent
+            common = gitdir
+            if (gitdir / "commondir").is_file():
+                c = Path(read(gitdir / "commondir").strip())
+                common = c if c.is_absolute() else (gitdir / c).resolve()
+            if common.name == ".git":
+                return common.parent
     return repo
 
 
+def project_folder_name(checkout: Path) -> str:
+    """Claude Code's folder name for a checkout: its path, every character that isn't a letter or digit turned into -."""
+    return re.sub(r"[^A-Za-z0-9]", "-", str(checkout))
+
+
 def find_memory_dir(repo: Path, projects: Path) -> tuple[Path | None, str]:
-    """The auto-memory folder Claude Code keeps for `repo`: projects/<path with every character
-    that isn't a letter or digit turned into ->/memory. If the exact name isn't there, a folder
-    whose name matches once punctuation is ignored is accepted when it is the only one."""
+    """The auto-memory folder Claude Code keeps for `repo`, found by its exact name only. A folder with
+    a similar name may belong to another project (`my-app` and `myapp`), so it is shown, never used."""
     root = main_checkout(repo)
-    name = re.sub(r"[^A-Za-z0-9]", "-", str(root))
+    name = project_folder_name(root)
     exact = projects / name / "memory"
     if exact.is_dir():
-        return exact, f"{exact}"
+        return exact, str(exact)
     key = lambda x: re.sub(r"[^a-z0-9]", "", x.lower())
-    near = [d / "memory" for d in (projects.iterdir() if projects.is_dir() else [])
-            if key(d.name) == key(name) and (d / "memory").is_dir()]
-    if len(near) == 1:
-        return near[0], f"{near[0]} (the closest match to {name})"
-    why = f"{len(near)} folders match" if near else "none exists yet: Claude Code creates it the first time it saves a memory"
-    return None, f"no memory folder for {root} under {projects} ({why}); pass --memory-dir to name one"
+    # Similar: the same letters and digits, or (Claude Code shortens a very long name) the same first 200 characters.
+    similar = sorted(str(d / "memory") for d in (projects.iterdir() if projects.is_dir() else [])
+                     if (d / "memory").is_dir() and (key(d.name) == key(name) or (len(name) > 200 and d.name.startswith(name[:200]))))
+    msg = (f"no memory folder named {name} under {projects}. If Claude Code has saved memories for {root}, "
+           "pass --memory-dir with its folder")
+    return None, msg + (f". Similar names, maybe another project's: {', '.join(similar[:3])}" if similar else "")
 
 
 # ---------------------------------------------------------------- draft index
@@ -1139,31 +1160,80 @@ def self_test_repo() -> tuple[list[tuple[str, bool, str]], set[str]]:
     ], {f["check"] for f in fs}
 
 
+def run_main(args: list[str], config: Path) -> tuple[int, str, str]:
+    """main() with $CLAUDE_CONFIG_DIR pointed at a planted config folder: (exit code, stdout, stderr)."""
+    old = os.environ.get("CLAUDE_CONFIG_DIR")
+    os.environ["CLAUDE_CONFIG_DIR"] = str(config)
+    out, err = io.StringIO(), io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            try:
+                rc = main(args)
+            except SystemExit as e:                     # argparse errors exit
+                rc = e.code if isinstance(e.code, int) else 1
+    finally:
+        if old is None:
+            os.environ.pop("CLAUDE_CONFIG_DIR", None)
+        else:
+            os.environ["CLAUDE_CONFIG_DIR"] = old
+    return rc, out.getvalue(), err.getvalue()
+
+
 def self_test_project() -> list[tuple[str, bool, str]]:
-    """Plant a Claude Code config folder and check --project finds each repo's memory folder."""
+    """Plant a Claude Code config folder and repositories, and check --project finds each repo's own
+    memory, never another project's, and wires the rest of the command up."""
     with tempfile.TemporaryDirectory() as t:
         t = Path(t)
-        projects = t / "config" / "projects"
-        main, other, fresh = t / "code" / "my.app", t / "code" / "other_repo", t / "code" / "fresh"
-        for d in (main, other, fresh):
+        config = t / "config"
+        projects = config / "projects"
+        code = t / "code"
+        main_repo, fresh, lookalike = code / "my.app", code / "my-app2", code / "myapp2"
+        for d in (main_repo / ".git" / "worktrees" / "feature", main_repo / "packages" / "web", fresh / ".git", lookalike):
             d.mkdir(parents=True)
-        # The main checkout's memory, under Claude Code's name for it.
-        (projects / re.sub(r"[^A-Za-z0-9]", "-", str(main)) / "memory").mkdir(parents=True)
-        # A worktree of it: its .git file points into the main checkout's .git/worktrees.
-        wt = t / "code" / "my.app-feature"
+        mem = projects / project_folder_name(main_repo) / "memory"
+        mem.mkdir(parents=True)
+        (mem / "MEMORY.md").write_text("- [A](a.md) — a hook\n", encoding="utf-8")
+        (mem / "a.md").write_text("---\nname: a\ndescription: a fact\nmetadata:\n  type: project\n---\nDecided today.\n", encoding="utf-8")
+        # A worktree, as git lays it out: its .git file names a git dir whose commondir leads to the main .git.
+        wt = code / "my.app-feature"
         wt.mkdir()
-        (main / ".git" / "worktrees" / "feature").mkdir(parents=True)
-        (wt / ".git").write_text(f"gitdir: {main / '.git' / 'worktrees' / 'feature'}\n", encoding="utf-8")
-        # A folder named with underscores kept (an older naming), found as the only close match.
-        (projects / re.sub(r"[^A-Za-z0-9_]", "-", str(other)) / "memory").mkdir(parents=True)
-        found = {name: find_memory_dir(d, projects) for name, d in
-                 (("main", main), ("worktree", wt), ("close", other), ("fresh", fresh))}
-    want = projects / re.sub(r"[^A-Za-z0-9]", "-", str(main)) / "memory"
+        (wt / ".git").write_text(f"gitdir: {main_repo / '.git' / 'worktrees' / 'feature'}\n", encoding="utf-8")
+        (main_repo / ".git" / "worktrees" / "feature" / "commondir").write_text("../..\n", encoding="utf-8")
+        # Another project whose folder name differs only in punctuation: my-app2 has no memory, myapp2 does.
+        other = projects / project_folder_name(lookalike) / "memory"
+        other.mkdir(parents=True)
+        # A very long path, whose folder Claude Code shortens.
+        deep = code / ("d" * 120) / ("e" * 100)
+        (deep / ".git").mkdir(parents=True)
+        (projects / (project_folder_name(deep)[:200] + "-9f3a2c") / "memory").mkdir(parents=True)
+        (config / "CLAUDE.md").write_text("Run `npm run dev` in src/app.\n", encoding="utf-8")
+
+        worktree = find_memory_dir(repo_root(wt), projects)
+        subfolder = find_memory_dir(repo_root(main_repo / "packages" / "web"), projects)
+        look = find_memory_dir(repo_root(fresh), projects)
+        long = find_memory_dir(repo_root(deep), projects)
+        rc_draft, _, _ = run_main(["--project", str(main_repo / "packages" / "web"), "--draft-index"], config)
+        drafted = (mem / DRAFT_NAME).exists()
+        rc_none, _, err_none = run_main(["--project", str(fresh), "--draft-index"], config)
+        rc_json, out_json, _ = run_main(["--project", str(main_repo), "--json"], config)
+        rc_mix, _, err_mix = run_main(["--project", str(main_repo), "--draft-index", "--json"], config)
+        other_untouched = not (other / DRAFT_NAME).exists()
+    try:
+        checks = {f["check"] for f in json.loads(out_json)}
+    except ValueError:
+        checks = set()
     return [
-        ("project-finds-memory", found["main"][0] == want, str(found["main"])),
-        ("worktree-shares-main-memory", found["worktree"][0] == want, str(found["worktree"])),
-        ("close-name-accepted", found["close"][0] is not None and "closest match" in found["close"][1], str(found["close"])),
-        ("missing-memory-said", found["fresh"][0] is None and "none exists yet" in found["fresh"][1], str(found["fresh"])),
+        ("worktree-shares-main-memory", worktree[0] == mem, str(worktree)),
+        ("subfolder-uses-repo-memory", subfolder[0] == mem, str(subfolder)),
+        ("lookalike-never-used", look[0] is None and str(other) in look[1] and "maybe another project" in look[1], str(look)),
+        ("long-name-shown-not-used", long[0] is None and "9f3a2c" in long[1], str(long)),
+        ("project-draft-in-own-memory", rc_draft == 0 and drafted, f"rc={rc_draft}, drafted={drafted}"),
+        ("project-no-memory-writes-nothing", rc_none == 2 and other_untouched and "no memory folder named" in err_none
+         and "usage:" not in err_none,
+         f"rc={rc_none}, other untouched={other_untouched}, {err_none[-120:]!r}"),
+        ("project-reads-global-and-memory", rc_json == 0 and {"global-project-leak", "memory-relative-date"} <= checks,
+         f"rc={rc_json}, {sorted(checks)}"),
+        ("project-flag-conflict-named", rc_mix == 2 and "--project --draft-index takes" in err_mix, f"rc={rc_mix}, {err_mix[-100:]!r}"),
     ]
 
 
@@ -1238,7 +1308,7 @@ def self_test_draft() -> list[tuple[str, bool, str]]:
         ]
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--project", type=Path, help="audit this repo, its Claude Code memory folder and the global "
                     "CLAUDE.md, found automatically")
@@ -1252,7 +1322,7 @@ def main() -> int:
     ap.add_argument("--force", action="store_true", help=f"with --draft-index: overwrite an existing {DRAFT_NAME}")
     ap.add_argument("--strict", action="store_true", help="exit 1 on any WARN as well as FAIL (for CI)")
     ap.add_argument("--census", action="store_true", help="with --repo: list every markdown file and how the walk test covers it")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
     try:
         sys.stdout.reconfigure(encoding="utf-8")
     except Exception:
@@ -1263,19 +1333,24 @@ def main() -> int:
     if a.project:
         if a.repo or a.census:
             ap.error("--project already names the repo; use --repo for --census")
-        a.repo = a.project
+        if a.draft_index and (a.global_file or a.json or a.strict):
+            ap.error("--project --draft-index takes --memory-dir and --force only")
+        root = repo_root(a.project.expanduser().resolve())
+        if root != a.project.expanduser().resolve():
+            print(f"repo: {root}", file=sys.stderr)
         if not a.memory_dir:
-            a.memory_dir, said = find_memory_dir(a.project.expanduser().resolve(), claude_home() / "projects")
+            a.memory_dir, said = find_memory_dir(root, claude_home() / "projects")
             print(f"memory folder: {said}", file=sys.stderr)
-        if not a.global_file and (claude_home() / "CLAUDE.md").exists():
-            a.global_file = claude_home() / "CLAUDE.md"
-        if a.draft_index:
-            a.repo = a.global_file = None               # --draft-index works on the memory folder alone
+        if a.draft_index:                               # the draft works on the memory folder alone
             if not a.memory_dir:
                 return 2
+        else:
+            a.repo = root
+            if not a.global_file and (claude_home() / "CLAUDE.md").exists():
+                a.global_file = claude_home() / "CLAUDE.md"
     if a.draft_index:
-        if not a.memory_dir or a.repo or a.global_file or a.json:
-            ap.error("--draft-index takes --memory-dir only (plus --force)")
+        if not a.memory_dir or a.repo or a.global_file or a.json or a.strict:
+            ap.error("--draft-index takes --memory-dir (or --project) and --force only")
         return draft_index(a.memory_dir.expanduser(), force=a.force)
     if a.force:
         ap.error("--force only applies to --draft-index")

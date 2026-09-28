@@ -110,9 +110,11 @@ backticked paths, `@` imports and links that don't exist, `.claude/rules` globs 
 nothing, a skill whose links into its own folder are dead, a binding rule that names no
 enforcer, and project-specific lines in your global file.
 
-From your project's folder, one command audits the repo, the memory Claude Code keeps for
-it and your global `CLAUDE.md`. It finds the memory folder itself, including from a
-worktree, and says so if Claude Code hasn't saved any memory for the project yet:
+From anywhere in your repo, one command audits the repo, the memory Claude Code keeps for
+it and your global `CLAUDE.md`. It finds the memory folder itself, from a subfolder or a
+worktree too. It only uses an exact match: when it can't find one, it says what it looked
+for and lists similarly named folders without touching them, since `my-app` and `myapp`
+can be two different projects.
 
 ```
 python skills/memory-architecture/scripts/audit_memory.py --project .
@@ -152,9 +154,10 @@ python skills/memory-architecture/scripts/audit_memory.py --draft-index --projec
 ## What it runs, and what it doesn't
 
 - It reads only the paths you pass it, and runs `git ls-files` and `git check-ignore` in
-  `--repo` to see what is tracked and what is ignored. With `--project` it also lists the
-  folder names in `~/.claude/projects` to find your project's memory, and reads your global
-  `~/.claude/CLAUDE.md`.
+  `--repo` to see what is tracked and what is ignored. With `--project` it also reads the
+  `.git` files that lead to your repo's root and main checkout, lists the folder names in
+  `~/.claude/projects` (or `$CLAUDE_CONFIG_DIR/projects`) to find your project's memory,
+  and reads the global `CLAUDE.md` in that same folder.
 - It writes nothing, with two exceptions: `--self-test` writes a temporary folder (with a
   throwaway git repository in it) and deletes it, and `--draft-index` writes one file,
   `MEMORY.draft.md`, in the memory folder you name. It never overwrites `MEMORY.md`.
