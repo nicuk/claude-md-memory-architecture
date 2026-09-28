@@ -197,14 +197,14 @@ python skills/memory-architecture/scripts/audit_memory.py --draft-index --projec
 repo, the memory Claude Code keeps for it and the global file, in about two seconds in total.
 Every FAIL was then checked by hand:
 
-- **Three FAILs, two of them real.** A memory missing from its index while still calling itself
-  the active plan, and an index entry pointing at a memory that no longer exists. The third was
-  a model id written in backticks, which the audit read as a path.
+- **Two real FAILs.** A memory missing from its index while still calling itself the active
+  plan, and an index entry pointing at a memory that no longer exists.
 - **Warnings worth acting on:** three memory indexes over their load budget, and 21 repositories
   with no CLAUDE.md or AGENTS.md at all.
-- **A false alarm, now fixed.** In one repository, a skill installed locally in a gitignored
-  folder produced 37 FAILs for links that "won't ship", though nothing in that folder ships.
-  1.4.1 fixes it, and the self-test plants the case so it can't come back.
+- **Two false alarms, now fixed.** In one repository, a skill installed locally in a gitignored
+  folder produced 37 FAILs for links that "won't ship", though nothing in that folder ships. In
+  another, a model id in backticks, `anthropic/claude-haiku-4.5`, was read as a path. 1.4.1
+  fixes both, and the self-test plants each case so it can't come back.
 
 The rules come from about fifteen repositories worked with coding agents between June
 and September 2026. Every rule has an incident behind it, recorded in

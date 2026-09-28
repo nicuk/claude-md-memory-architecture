@@ -75,6 +75,9 @@ CODE_SPAN = re.compile(r"`[^`\n]*`")
 # Walk-test targets that aren't pointers into the repo. Each class was a false FAIL on real repos.
 PLACEHOLDER_HEAD = re.compile(r"^[A-Z][A-Z0-9_]*[A-Z0-9]$")   # `OUT_DIR/x.rs`: a variable, not a folder
 HOME_DIRS = {".local", ".config", ".cache", ".ssh", ".aws", ".kube", ".docker", ".npm", ".cargo", ".gnupg"}
+# `anthropic/claude-haiku-4.5` is a model id, not a folder: a real CLAUDE.md FAILed on one (2026-09-28).
+MODEL_PROVIDERS = {"anthropic", "openai", "google", "meta-llama", "mistralai", "deepseek", "deepseek-ai", "x-ai",
+                   "xai", "cohere", "qwen", "amazon", "microsoft", "nvidia", "perplexity", "moonshotai", "zai"}
 CREATE_WORDS = re.compile(r"\b(?:creat(?:e|es|ed|ing)|generat(?:e|es|ed|ing)|produc(?:e|es|ed|ing)|outputs?|"
                           r"emits?|will write|writes? (?:it |them )?(?:to|into))\b", re.I)
 UNSCOPED_GLOBS = {"**", "**/*", "/**", "./**", "**/**"}
@@ -874,8 +877,10 @@ def check_repo(repo: Path, r: Report) -> None:
                 # Claude Code's own plugin-dev skills (2026-09-27). `@` imports are a CLAUDE.md feature,
                 # and `@john.doe` in a skill is a person. Links are checked above.
                 continue
-            if placeholder or (head in HOME_DIRS and not (repo / head).exists() and not (md.parent / head).exists()):
-                continue                          # `~/.config/x` quoted without the ~, or `OUT_DIR/x.rs`
+            elsewhere = not (repo / head).exists() and not (md.parent / head).exists()
+            model_id = kind == "backtick" and head in MODEL_PROVIDERS and t.count("/") == 1
+            if placeholder or (elsewhere and (head in HOME_DIRS or model_id)):
+                continue                          # `~/.config/x` without the ~, `OUT_DIR/x.rs`, `openai/gpt-4o`
             cands = walk_candidates(repo, md, t)
             if cands and not any((repo / c).exists() or c in (tracked or ()) or c in tracked_dirs for c in cands):
                 pending.append((level, rel, kind, t, cands, said))
@@ -1006,6 +1011,7 @@ def self_test_repo() -> tuple[list[tuple[str, bool, str]], set[str]]:
             "- To add a handler, create `src/app/new_module.ts` first.",
             "- The build compiles `lib/shim.c` and emits a binary.",
             "- Dead: the router is `src/app/really_gone.ts`.",
+            "- Model: summaries use `anthropic/claude-haiku-4.5`; the old client was `openai/legacy/client_gone.ts`.",
             "- Imports: @docs/guide.md and @docs/missing_import.md, but not `@docs/in_code.md`.",
             "- Links: [guide](docs/guide.md), [top](#top), [site](https://example.com/gone.md), [old](old_notes.md).",
             "- Mail dev@example.com with questions.",
@@ -1119,6 +1125,8 @@ def self_test_repo() -> tuple[list[tuple[str, bool, str]], set[str]]:
         ("walk-create-word-not-a-pass", bool(at("docs/AGENTS.md", "walk-test", "WARN", "only resolves as `native/lib/shim.c`")),
          str(said("shim.c"))),
         ("walk-dead-still-fails", bool(at("docs/AGENTS.md", "walk-test", "FAIL", "src/app/really_gone.ts")), "no FAIL"),
+        ("walk-skips-model-id", not said("claude-haiku-4.5")
+         and bool(at("docs/AGENTS.md", "walk-test", "FAIL", "openai/legacy/client_gone.ts")), str(said("claude-haiku") + said("client_gone"))),
         ("dot-claude-is-root", not [f for f in fs if f["check"] == "root-missing"], "root-missing fired"),
         ("dot-claude-walked", bool(at(".claude/CLAUDE.md", "walk-test", "FAIL", "src/app/gone_root.ts")), "no FAIL"),
         ("rule-body-walked", bool(at(rules + "body.md", "walk-test", "FAIL", "src/app/body_gone.ts")), "no FAIL"),
