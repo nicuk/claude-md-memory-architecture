@@ -34,6 +34,11 @@ need a check for the third, and gives you a script that proves the fix holds:
 
 *Real output, from a small made-up memory folder.*
 
+**Tested on real code:** run on 32 real repositories, it audited all of them in about two
+seconds. It found a memory hidden from the index while still calling itself the active plan,
+an index entry pointing at a memory that no longer exists, and three indexes over their load
+budget. [How it was checked](#evidence) · [An example report](#an-example-report)
+
 ## Who it's for
 
 If you built your product with Claude Code, Cursor, Codex, or several of them over a few
@@ -72,6 +77,23 @@ You don't need to know where any of these files live. Ask in plain words:
 | **Rules that can't be skipped** | Which rules to write down, which to enforce with a permission deny rule, hook or CI step, and why a folder `CLAUDE.md` alone won't stop Claude creating a new file in a frozen folder. In a binding file, each rule says what enforces it, and the audit flags one that doesn't. |
 | **Skills and agent files that don't ship broken** | Links inside a skill's own folder must resolve. Agents, commands and skills under `.claude/` are checked too, and `--census` shows which files the check covers. |
 | **A score you can defend** | A 0–10 rubric where every point cites evidence, and things it couldn't see are marked N/A rather than scored 0. |
+
+### An example report
+
+Told that a memory folder *"feels bloated and every session seems to burn tokens re-reading
+it, and claude still redoes stuff"*, and asked to score it 0–10 and say exactly what to fix,
+one run on a made-up folder for a bakery chain's demand forecaster answered:
+
+| | |
+|---|---|
+| **Score** | 2/10 for the memory folder. The seven criteria it couldn't see without the repo are marked N/A, not 0. |
+| **Why tokens burn** | The index loads about 2,400 tokens every session, 3.2 times its budget. One experiment log is copied into 8 memories: about 70 KB of the folder's 87 KB. |
+| **Why work gets redone** | Four memories each claim to be the current direction. The one the index doesn't link says to build a pooled model, which another memory records as already tested and failed. |
+| **What to fix first** | Pick one current direction and rewrite the other three as dated history (about 15 minutes). Then replace the 8 log copies with one list of closed questions (about an hour). |
+| **A CLAUDE.md in every folder?** | No. A folder file loads only once Claude reads a file in that folder, which is after it has planned. One short root file, plus a local rule only where the code can't show it. |
+
+[Read the full answer](examples/memory-audit-report.md), unedited, with the evidence behind
+each line.
 
 ## How it compares
 
@@ -170,6 +192,19 @@ python skills/memory-architecture/scripts/audit_memory.py --draft-index --projec
 ## Evidence
 
 **Case study:** [The memory index that cost 2,500 tokens a session, and hid an "active" plan](https://github.com/nicuk/cairn-principles/blob/main/case-studies/memory-index-that-cost-every-session.md).
+
+**On 32 real repositories** on one developer's machine (2026-09-28), `--project` audited each
+repo, the memory Claude Code keeps for it and the global file, in about two seconds in total.
+Every FAIL was then checked by hand:
+
+- **Three FAILs, two of them real.** A memory missing from its index while still calling itself
+  the active plan, and an index entry pointing at a memory that no longer exists. The third was
+  a model id written in backticks, which the audit read as a path.
+- **Warnings worth acting on:** three memory indexes over their load budget, and 21 repositories
+  with no CLAUDE.md or AGENTS.md at all.
+- **A false alarm, now fixed.** In one repository, a skill installed locally in a gitignored
+  folder produced 37 FAILs for links that "won't ship", though nothing in that folder ships.
+  1.4.1 fixes it, and the self-test plants the case so it can't come back.
 
 The rules come from about fifteen repositories worked with coding agents between June
 and September 2026. Every rule has an incident behind it, recorded in

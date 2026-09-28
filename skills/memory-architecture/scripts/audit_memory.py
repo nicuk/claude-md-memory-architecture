@@ -861,8 +861,9 @@ def check_repo(repo: Path, r: Report) -> None:
                 blevel = "WARN" if not strict or md.name == "README.md" else "FAIL"
                 if found is None and not any(CREATE_WORDS.search(x) for x in said):
                     r.add(blevel, "walk-test", rel, WALK_MSG[kind].format(t=t) + f" from {where}; the skill ships broken")
-                elif found is not None and tracked is not None:
-                    # Installers get what git tracks, not what is on this machine.
+                elif found is not None and tracked is not None and rel in tracked:
+                    # Installers get what git tracks, not what is on this machine. A skill that is itself
+                    # untracked (a gitignored local install) ships nothing, so nothing ships broken.
                     target = os.path.relpath(os.path.normpath(found), repo).replace(os.sep, "/")
                     if target not in tracked and target not in tracked_dirs:
                         r.add(blevel, "walk-test", rel, f"link to `{t}` resolves here, but `{target}` isn't tracked "
@@ -1046,6 +1047,10 @@ def self_test_repo() -> tuple[list[tuple[str, bool, str]], set[str]]:
         (p / "scratch" / "notes.txt").write_text("", encoding="utf-8")    # on disk, never added, not ignored
         (p / "scratch" / "CLAUDE.md").write_text("- local rule\n", encoding="utf-8")   # an agent file never added
         (p / "skills" / "demo" / "references" / "local-only.md").write_text("", encoding="utf-8")   # linked, never added
+        # A skill installed locally and never added (a gitignored folder on a real repo): it ships nothing.
+        (p / ".claude" / "skills" / "installed" / "reference").mkdir(parents=True)
+        (p / ".claude" / "skills" / "installed" / "SKILL.md").write_text("Read [brand](reference/brand.md).\n", encoding="utf-8")
+        (p / ".claude" / "skills" / "installed" / "reference" / "brand.md").write_text("", encoding="utf-8")
         try:
             ok = git(p, "init", "-q").returncode == 0
             # --info-only indexes the files without writing git objects: nothing but the index to clean up.
@@ -1139,6 +1144,8 @@ def self_test_repo() -> tuple[list[tuple[str, bool, str]], set[str]]:
         ("unknown-check-name-refused", refused_unknown, "Report.add accepted a name no .add() call spells out"),
         ("skill-link-untracked-fails", bool(at("skills/demo/SKILL.md", "walk-test", "FAIL", "isn't tracked"))
          and "references/local-only.md" in str(said("isn't tracked")), str(said("local-only"))),
+        ("untracked-skill-ships-nothing", not at(".claude/skills/installed/SKILL.md", "walk-test"),
+         str(at(".claude/skills/installed/SKILL.md"))),
         ("dot-claude-no-at-imports", not said("jane.smith"), str(said("jane"))),
         ("rule-heading-strict", not said("an intro") and not said("in the rules folder"), str(said("intro") + said("rules folder"))),
         ("dot-claude-build-folders-walked", bool(at(".claude/rules/build/deep.md", "walk-test", "FAIL", "build_rule_gone"))

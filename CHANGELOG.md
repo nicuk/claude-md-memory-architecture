@@ -2,6 +2,24 @@
 
 Each release raises `version` in `.claude-plugin/plugin.json` and is tagged `vX.Y.Z`.
 
+## 1.4.1 (2026-09-28)
+
+A run on 32 real repositories found a false alarm class, and the README now shows what a
+report looks like.
+
+**Fixed**
+- A skill installed locally in a gitignored folder no longer FAILs with "isn't tracked in git,
+  so the skill ships without it". The check asked whether each link's target is tracked, but
+  not whether the skill linking to it is: an untracked skill ships nothing, so nothing ships
+  broken. On one real repository this was 37 false FAILs. A planted case,
+  `untracked-skill-ships-nothing`, fails on the old behaviour.
+
+**Added**
+- `examples/memory-audit-report.md`: the complete answer from one run on the eval fixture,
+  and a summary of it in the README.
+- The README's Evidence section reports the run on real repositories, with each FAIL checked
+  by hand.
+
 ## 1.4.0 (2026-09-28)
 
 **Added**
