@@ -222,9 +222,8 @@ after a few sessions.
 Run the deterministic checks first, since they're cheaper and more reliable than reading:
 
 ```bash
-python <skill-dir>/scripts/audit_memory.py --global-file ~/.claude/CLAUDE.md \
-  --memory-dir ~/.claude/projects/<project>/memory --repo .
-python <skill-dir>/scripts/audit_memory.py --self-test   # proves every check can fire
+python <skill-dir>/scripts/audit_memory.py --project .    # repo, its memory folder, global file
+python <skill-dir>/scripts/audit_memory.py --self-test     # proves every check can fire
 ```
 
 FAIL means a breach (an orphaned memory, a truncated index, a dead pointer in a live
@@ -236,7 +235,7 @@ When `index-budget`, `index-line-length`, `index-truncated`, `index-duplicate` o
 `memory-orphan` fire, fix the index with a draft rather than by hand:
 
 ```bash
-python <skill-dir>/scripts/audit_memory.py --memory-dir <memory-dir> --draft-index
+python <skill-dir>/scripts/audit_memory.py --project . --draft-index
 ```
 
 It writes `MEMORY.draft.md` next to the index: one line of at most about 150 characters

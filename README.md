@@ -110,11 +110,21 @@ backticked paths, `@` imports and links that don't exist, `.claude/rules` globs 
 nothing, a skill whose links into its own folder are dead, a binding rule that names no
 enforcer, and project-specific lines in your global file.
 
+From your project's folder, one command audits the repo, the memory Claude Code keeps for
+it and your global `CLAUDE.md`. It finds the memory folder itself, including from a
+worktree, and says so if Claude Code hasn't saved any memory for the project yet:
+
 ```
-python skills/memory-architecture/scripts/audit_memory.py --self-test
+python skills/memory-architecture/scripts/audit_memory.py --project .
+```
+
+Or name each part yourself, and see the other options:
+
+```
 python skills/memory-architecture/scripts/audit_memory.py --repo . \
-  --memory-dir ~/.claude/projects/<project>/memory --global-file ~/.claude/CLAUDE.md
+  --memory-dir <memory folder> --global-file ~/.claude/CLAUDE.md
 python skills/memory-architecture/scripts/audit_memory.py --repo . --census
+python skills/memory-architecture/scripts/audit_memory.py --self-test
 ```
 
 Add `--strict` in CI to fail on warnings as well as failures, once a repo has cleared them.
@@ -136,14 +146,15 @@ prints the size before and after. It never changes `MEMORY.md`: you read the dra
 swap it in yourself.
 
 ```
-python skills/memory-architecture/scripts/audit_memory.py --draft-index \
-  --memory-dir ~/.claude/projects/<project>/memory
+python skills/memory-architecture/scripts/audit_memory.py --draft-index --project .
 ```
 
 ## What it runs, and what it doesn't
 
 - It reads only the paths you pass it, and runs `git ls-files` and `git check-ignore` in
-  `--repo` to see what is tracked and what is ignored.
+  `--repo` to see what is tracked and what is ignored. With `--project` it also lists the
+  folder names in `~/.claude/projects` to find your project's memory, and reads your global
+  `~/.claude/CLAUDE.md`.
 - It writes nothing, with two exceptions: `--self-test` writes a temporary folder (with a
   throwaway git repository in it) and deletes it, and `--draft-index` writes one file,
   `MEMORY.draft.md`, in the memory folder you name. It never overwrites `MEMORY.md`.

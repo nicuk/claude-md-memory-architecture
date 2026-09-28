@@ -2,6 +2,16 @@
 
 Each release raises `version` in `.claude-plugin/plugin.json` and is tagged `vX.Y.Z`.
 
+## 1.4.0 (2026-09-28)
+
+**Added**
+- `--project .` audits the repo, the memory folder Claude Code keeps for it, and the global
+  `CLAUDE.md`, finding each one itself. Until now the README asked for
+  `~/.claude/projects/<project>/memory` without saying how to find `<project>`. From a
+  worktree it finds the main checkout's memory, which all worktrees share. When Claude Code
+  hasn't saved a memory for the project yet, it says so instead of failing. It respects
+  `$CLAUDE_CONFIG_DIR`. `--draft-index --project .` works too.
+
 ## 1.3.0 (2026-09-27)
 
 An audit of this repo against its own principle, "a claim with an enforcer stays true", found
